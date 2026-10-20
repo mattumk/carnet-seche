@@ -610,7 +610,7 @@ const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 function weekStart(d = new Date()){ const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setHours(0,0,0,0); x.setDate(x.getDate() - day); return x; }
 const weekKey = d => { const w = weekStart(new Date(d)); return `${w.getFullYear()}-${String(w.getMonth()+1).padStart(2,"0")}-${String(w.getDate()).padStart(2,"0")}`; };
 function kgLabel(exo, kg){
-  if (kg == null) return "?";
+  if (kg == null) return "sans charge";
   if (exo && exo.bw) return kg > 0 ? `+${fr(kg)} kg` : "PDC";
   return `${fr(kg)} kg`;
 }
@@ -798,7 +798,7 @@ function analyze(){
     for (const e of s.exercises || []){
       const exo = ALL_EXOS[e.id]; if (!exo || !e.sets || !e.sets.length) continue;
       sets += e.sets.length;
-      let topScore = 0, topSet = null;
+      let topScore = -1, topSet = null;
       for (const x of e.sets){ const sc = e1rm(exo, x); if (sc > topScore){ topScore = sc; topSet = x; } if (x.kg != null) maxKg[e.id] = Math.max(maxKg[e.id] ?? -1, x.kg); }
       if (best[e.id] != null && topScore > best[e.id] + 0.01) prs.push(e.id);
       if (best[e.id] == null || topScore > best[e.id]){ best[e.id] = topScore; records[e.id] = { kg: topSet.kg, reps: topSet.reps, date: s.date }; }
@@ -860,6 +860,14 @@ function recommendedType(){ const order = Object.keys(PROGRAM); const s = sessio
 
 /* ---------- Rendu ---------- */
 function render(){
+  try { renderInner(); }
+  catch (err){
+    console.error(err);
+    const m = document.getElementById("main");
+    if (m) m.innerHTML = `<section class="panel"><h2>Petit souci d'affichage</h2><p class="small">Tes données sont en sécurité. Change d'onglet ou recharge la page. Si ça persiste, envoie ce message à Claude : <code>${String(err && err.message || err).replace(/[<>&]/g, "")}</code></p></section>`;
+  }
+}
+function renderInner(){
   const ae = document.activeElement;
   if (ae && $("#main").contains(ae) && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) { renderQueued = true; return; }
   renderQueued = false;
