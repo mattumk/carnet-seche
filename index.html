@@ -74,7 +74,20 @@ svg text{font-family:var(--display)}
 header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:6;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding-block:12px 10px;display:flex;flex-direction:column;gap:8px}
 .top-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
 header.top h1{font-size:28px}
-header.top h1 span{color:var(--yellow)}
+header.top h1 span{color:var(--mode,var(--yellow))}
+.brand{display:flex;align-items:center;gap:8px;min-width:0}
+.mode-btn{flex:none;width:34px;height:34px;border-radius:50%;border:2px solid var(--mode,var(--yellow));background:var(--surface);color:var(--mode,var(--yellow));font-size:16px;font-weight:800;display:grid;place-items:center;padding:0;cursor:pointer}
+.mode-list{display:flex;flex-direction:column;gap:10px}
+.mode-opt{display:flex;flex-direction:column;gap:4px;text-align:left;background:var(--surface-2);border:2px solid transparent;border-radius:16px;padding:12px 14px;color:var(--fg);font:inherit;cursor:pointer}
+.mode-opt b{font-family:var(--display);font-weight:400;font-size:22px;color:var(--mc)}
+.mode-opt span{font-size:14px;color:var(--muted)}
+.mode-opt[aria-pressed="true"]{border-color:var(--mc)}
+.mode-opt .cur{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--mc)}
+.mode-cfg{display:flex;flex-direction:column;gap:10px;background:var(--ink);border-radius:16px;padding:12px}
+.goal-alert{background:color-mix(in srgb,var(--red) 18%,var(--surface));border-radius:14px;padding:10px 12px}
+.goal-alert p{margin:0}
+.mode-cfg .field input{background:var(--surface-2)}
+.mode-warn{background:color-mix(in srgb,var(--amber) 16%,var(--surface));border-radius:12px;padding:10px 12px;margin:0}
 .lvl-pill{display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:999px;padding:4px 12px 4px 4px;font-weight:600;font-size:13px}
 .lvl-pill svg{width:30px;height:30px}
 .xpbar{height:8px;border-radius:99px;background:var(--surface);overflow:hidden}
@@ -624,7 +637,7 @@ body.rest-over::after{content:"";position:fixed;inset:0;pointer-events:none;z-in
 <div class="wrap">
   <header class="top">
     <div class="top-row">
-      <h1>Carnet <span>Sèche</span></h1>
+      <div class="brand"><h1>Carnet <span id="mode-name">Sèche</span></h1><button type="button" class="mode-btn" id="mode-btn" aria-label="Changer de mode : sèche, prise de masse ou entretien">⇄</button></div>
       <div class="lvl-pill" id="lvl-pill"></div>
     </div>
     <div class="xpbar" aria-hidden="true"><i id="xp-fill" style="width:0%"></i></div>
@@ -751,6 +764,22 @@ const credit = p => `<span class="credit">Photo : ${p.by} · Unsplash</span>`;
    Run : 0,9 kcal nette par kg et par km, +5 % en fractionné. */
 const ACTIVITY = [[1.2, "Moins de 5 000 pas par jour"], [1.3, "5 000 à 8 000 pas par jour"], [1.45, "Plus de 8 000 pas par jour"]];
 let DEFICIT = 500;
+let SURPLUS = 250;
+/* Trois modes : sèche (déficit), prise de masse (+250 kcal) et entretien (maintien). Chaque jour garde le mode dans lequel il a été vécu. */
+const MODES = {
+  seche:     { l:"Sèche",     long:"Sèche",          c:"var(--yellow)", desc:"Perdre du gras en gardant ton muscle. Tu manges environ 500 kcal de moins que ce que tu dépenses, charges lourdes, volume normal." },
+  masse:     { l:"Masse",     long:"Prise de masse", c:"var(--red)",    desc:"Prendre du muscle proprement. Tu manges environ 250 kcal de plus que ce que tu dépenses, avec plus de séries sur les exercices principaux." },
+  entretien: { l:"Renfo",     long:"Entretien renfo", c:"var(--blue)",   desc:"Garder ta forme et continuer à te renforcer sans te tuer. Tu manges ce que tu dépenses, travail de force sur les gros exercices, moins de séries ailleurs." }
+};
+function curMode(){ return MODES[profile.mode] ? profile.mode : "seche"; }
+function modeOn(key){
+  const h = (profile.modes || []).filter(x => MODES[x.mode]).slice().sort((a, b) => a.since.localeCompare(b.since));
+  if (!h.length) return curMode();
+  let m = h[0].mode; for (const x of h) if (x.since <= key) m = x.mode; return m;
+}
+function calorieOffset(m){ return m === "masse" ? SURPLUS : m === "entretien" ? 0 : -DEFICIT; }
+/* Un jour est « bon » selon le mode : déficit en sèche, surplus en masse, équilibre en entretien. */
+function balGood(b, m, n){ n = n || 1; return m === "masse" ? b >= 0 : m === "entretien" ? Math.abs(b) <= 200 * n : b <= 0; }
 let profile = { name:"", weight:null, bf:null, activity:1.3, startWeight:null, startBf:null, goalBf:null, perWeek:4, cardioKm:0, dislikes:"", likes:"", hidden:[], breakfast:null };
 let cloudDays = [];
 const MET_MUSCU_NET = 3.5;
@@ -763,7 +792,8 @@ function sportOn(key){ let k = 0; for (const s of sessions()) if (dayKey(s.date)
 function targets(){
   const typical = (QN() * Math.round(MET_MUSCU_NET * profile.weight * 55 / 60) + Math.round((profile.cardioKm || 0) * profile.weight * 0.9)) / 7;
   const tdee = baseKcal() + typical;
-  return { tdee: Math.round(tdee), kcal: Math.round((tdee - DEFICIT) / 50) * 50, prot: Math.round(profile.weight * 2 / 5) * 5, fat: Math.round(profile.weight * 0.8 / 5) * 5 };
+  const m = curMode();
+  return { tdee: Math.round(tdee), kcal: Math.round((tdee + calorieOffset(m)) / 50) * 50, prot: Math.round(profile.weight * (m === "seche" ? 2 : 1.8) / 5) * 5, fat: Math.round(profile.weight * 0.8 / 5) * 5 };
 }
 const kfmt = n => Math.round(n).toLocaleString("fr-FR");
 const BODYWEIGHT = 78;
@@ -1091,7 +1121,7 @@ function render(){
   }
 }
 function renderInner(){
-  DEFICIT = coachDeficit();
+  DEFICIT = coachDeficit(); SURPLUS = coachSurplus();
   const ae = document.activeElement;
   if (ae && $("#main").contains(ae) && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) { renderQueued = true; return; }
   renderQueued = false;
@@ -1112,6 +1142,10 @@ function renderInner(){
 document.addEventListener("focusout", () => setTimeout(() => { if (renderQueued) render(); }, 60));
 
 function renderHeader(){
+  const M = MODES[curMode()];
+  const mn = $("#mode-name"); if (mn) mn.textContent = M.l;
+  document.documentElement.style.setProperty("--mode", M.c);
+  document.title = "Carnet " + M.l;
   const L = A.level;
   $("#lvl-pill").innerHTML = `${plateSVG(L.color, L.n)}<span>${esc(L.name)}</span>`;
   $("#xp-fill").style.width = Math.round(L.pct * 100) + "%";
@@ -1144,7 +1178,7 @@ function viewPick(){
       <span class="pc-body">
         <span class="letter">Séance ${t}</span>
         <h2>${esc(p.label)}</h2>
-        <ul>${p.exos.map(e => `<li>${esc(e.name)}</li>`).join("")}</ul>
+        <ul>${p.exos.map(e => `<li>${esc(e.name)}${curMode() !== "seche" ? ` · ${modeSets(e)}×` : ""}</li>`).join("")}</ul>
         ${d ? `<span class="resume-cta">Reprendre la séance →</span>` : ""}
       </span>
     </button>`;
@@ -1164,15 +1198,30 @@ function viewPick(){
     <section class="pick" aria-label="Choisir la séance">
       ${[rec].concat(Object.keys(PROGRAM).filter(k => k !== rec)).map(card).join("")}
     </section>
-    <section class="rules">
-      <p class="label">Les règles de la sèche</p>
-      <div class="rule">${ICON.bolt}<p><b>Charges lourdes, toujours.</b> Le déficit fait fondre le gras. À la salle, ton job est de garder ta force pour garder ton muscle.</p></div>
-      <div class="rule">${ICON.stairs}<p><b>Double progression.</b> Tu restes sur une charge jusqu'à faire le haut de la fourchette sur toutes les séries. Ensuite, tu montes.</p></div>
-      <div class="rule">${ICON.clock}<p><b>Repos longs sur les gros exos</b> (2'–2'30), courts sur l'isolation (1'–1'30). Le minuteur part quand tu valides une série.</p></div>
-      <div class="rule">${ICON.skip}<p><b>Pressé ?</b> Saute le dernier exercice, jamais le premier.</p></div>
-    </section>`;
+    ${rulesHTML()}`;
 }
 
+function rulesHTML(){
+  const m = curMode();
+  const R = {
+    seche: ["Les règles de la sèche", [
+      [ICON.bolt, "Charges lourdes, toujours.", "Le déficit fait fondre le gras. À la salle, ton job est de garder ta force pour garder ton muscle."],
+      [ICON.stairs, "Double progression.", "Tu restes sur une charge jusqu'à faire le haut de la fourchette sur toutes les séries. Ensuite, tu montes."],
+      [ICON.clock, "Repos longs sur les gros exos", "(2'–2'30), courts sur l'isolation (1'–1'30). Le minuteur part quand tu valides une série."],
+      [ICON.skip, "Pressé ?", "Saute le dernier exercice, jamais le premier."] ]],
+    masse: ["Les règles de la prise de masse", [
+      [ICON.bolt, "Le muscle se construit dans l'assiette.", "Atteins ton objectif calorique même les jours sans séance : sans surplus, pas de prise de muscle."],
+      [ICON.stairs, "Surcharge progressive.", "Chaque séance, une rep ou un cran de plus sur les gros exercices. Une série en plus sur les deux premiers exos de chaque séance."],
+      [ICON.clock, "Récupère.", "Repos complets entre les séries, 7 à 8 h de sommeil : c'est là que le muscle pousse."],
+      [ICON.skip, "Prise propre.", "Vise environ +1 kg par mois. Plus vite, c'est surtout du gras à sécher ensuite."] ]],
+    entretien: ["Les règles de l'entretien renfo", [
+      [ICON.bolt, "Force sur les gros exos.", "Les deux premiers exercices passent en fourchette plus basse et plus lourde, avec un repos plus long : tu continues à te renforcer."],
+      [ICON.stairs, "Moins de séries ailleurs.", "Une série de moins sur l'isolation : des séances plus courtes, sans te cramer."],
+      [ICON.clock, "Garde 1 à 2 reps en réserve.", "Pas besoin d'aller à l'échec : on progresse sans se tuer, semaine après semaine."],
+      [ICON.skip, "Poids stable.", "Pèse-toi chaque semaine : tu dois rester à ±1 kg. S'il bouge, ajuste de 150 kcal par jour."] ]]
+  }[m];
+  return `<section class="rules"><p class="label">${R[0]}</p>${R[1].map(([ic, b, t]) => `<div class="rule">${ic}<p><b>${b}</b> ${t}</p></div>`).join("")}</section>`;
+}
 function displayKg(exo){
   const vals = (draft.sets[exo.id] || []).map(s => num(s.kg)).filter(v => v != null);
   if (vals.length) return Math.max(...vals);
@@ -1215,6 +1264,7 @@ function appliedChanges(){
 function coachSwap(exoId){ let r = null; for (const c of appliedChanges()) if (c.kind === "swap" && c.exo === exoId && c.alt && c.alt.id) r = c.alt; return r; }
 function coachSets(exoId){ let r = null; for (const c of appliedChanges()) if (c.kind === "sets" && c.exo === exoId && c.sets >= 1 && c.sets <= 8) r = Math.round(c.sets); return r; }
 function coachLoad(exoId){ let r = null; for (const c of appliedChanges()) if (c.kind === "load" && c.exo === exoId && c.kg != null) r = c; return r; }
+function coachSurplus(){ let r = 250; for (const c of appliedChanges()) if (c.kind === "surplus" && c.surplus >= 100 && c.surplus <= 500) r = Math.round(c.surplus); return r; }
 function coachDeficit(){ let r = 500; for (const c of appliedChanges()) if (c.kind === "deficit" && c.deficit >= 200 && c.deficit <= 800) r = Math.round(c.deficit); return r; }
 function coachCard(){
   const d = coachDocs()[0]; if (!d) return "";
@@ -1222,7 +1272,7 @@ function coachCard(){
   const age = (Date.now() - new Date(d.date + "T12:00:00")) / 864e5;
   if (age > 10 && !pending) return "";
   const open = pending > 0 || coachOpen;
-  const kindIcon = { load:"↑", sets:"＋", swap:"⇄", deficit:"kcal", note:"i" };
+  const kindIcon = { load:"↑", sets:"＋", swap:"⇄", deficit:"kcal", surplus:"kcal", note:"i" };
   return `<section class="coach">
     <button type="button" class="coach-head" data-coach-toggle aria-expanded="${open}">
       <span class="coach-badge">Coach</span>
@@ -1248,7 +1298,7 @@ async function setCoachStatus(docId, changeId, status){
   const d = cloudCoach.find(x => x.id === docId); if (!d) return;
   const nd = { ...d, changes: (d.changes || []).map(c => c.id === changeId ? { ...c, status, decidedAt: new Date().toISOString() } : c) };
   cloudCoach = cloudCoach.map(x => x.id === docId ? nd : x); LS.set("carnet.cache.coach", cloudCoach);
-  DEFICIT = coachDeficit();
+  DEFICIT = coachDeficit(); SURPLUS = coachSurplus();
   coachOpen = true; render();
   const ch = nd.changes.find(c => c.id === changeId);
   toast(status === "applied" ? `Appliqué : ${ch.label}` : status === "declined" ? "Changement refusé" : "Changement remis en attente");
@@ -1346,9 +1396,22 @@ function registerAlt(alt, orig){
   const ex = { ...orig, drop:false, ...alt, id:alt.id, name:alt.name, gear:alt.gear || orig.gear, bw:!!alt.bw, cue:alt.cue || orig.cue, inc:GEAR_INC[alt.gear] || orig.inc, replaces:orig.id };
   ALL_EXOS[alt.id] = ex; return ex;
 }
+/* Programme selon le mode.
+   Masse : +1 série sur les 2 premiers exercices et sur les exercices à 2 séries.
+   Entretien renfo : les 2 premiers exercices passent en force (fourchette plus basse, repos plus long), les autres perdent une série (2 minimum). */
+const EXO_IDX = {}; for (const t in PROGRAM) PROGRAM[t].exos.forEach((e, i) => { EXO_IDX[e.id] = i; });
+function modeAdj(e){
+  const m = curMode(), i = EXO_IDX[e.id] ?? 9;
+  if (m === "masse") return { sets: i < 2 || e.sets <= 2 ? e.sets + 1 : e.sets };
+  if (m === "entretien") return i < 2 ? { sets: e.sets, min: Math.max(4, e.min - 2), max: Math.max(6, e.max - 2), rest: e.rest + 30, drop: false } : { sets: Math.max(2, e.sets - 1) };
+  return {};
+}
+function effById(id){ if (draft && PROGRAM[draft.type]) for (const o of PROGRAM[draft.type].exos){ const x = effExo(o); if (x.id === id) return x; } return ALL_EXOS[id]; }
+function modeSets(e){ return modeAdj(e).sets ?? e.sets; }
 function effExo(e){
   const sw = draft && draft.swaps && draft.swaps[e.id];
   let x = sw ? (ALL_EXOS[sw.id] || registerAlt(sw, e)) : e;
+  const adj = modeAdj(e); if (Object.keys(adj).some(k => adj[k] !== x[k])) x = { ...x, ...adj };
   const n = coachSets(e.id); if (n && n !== x.sets) x = { ...x, sets: n };
   return x;
 }
@@ -1536,8 +1599,62 @@ function pace(r){
   const p = r.minutes / r.km; let m = Math.floor(p); let s = Math.round((p - m) * 60); if (s === 60){ m++; s = 0; }
   return `${m}'${String(s).padStart(2, "0")}/km`;
 }
+function weightRate(){
+  const since = (profile.modeStart && profile.modeStart.date) || "2000-01-01";
+  const ws = weighins().filter(x => x.date >= since && x.weight != null).slice().reverse();
+  if (ws.length < 2) return null;
+  const d = (new Date(ws[ws.length - 1].date) - new Date(ws[0].date)) / 6048e5;
+  if (d < 1.5) return null;
+  return (ws[ws.length - 1].weight - ws[0].weight) / d;
+}
+function weightChart(line, label){
+  const pts = weighins().filter(x => x.weight != null).slice(0, 12).reverse();
+  if (pts.length < 2) return "";
+  const W = 320, H = 120, top = 10, bot = 100;
+  const lo = Math.min(line, ...pts.map(x => x.weight)) - 0.5, hi = Math.max(line, ...pts.map(x => x.weight)) + 0.5;
+  const y = v => bot - (v - lo) / (hi - lo) * (bot - top), x = i => 16 + i * ((W - 32) / (pts.length - 1));
+  let s = `<line x1="8" x2="${W - 8}" y1="${y(line).toFixed(1)}" y2="${y(line).toFixed(1)}" style="stroke:var(--green);stroke-width:1.5;stroke-dasharray:4 3"/><text x="${W - 8}" y="${(y(line) - 5).toFixed(1)}" text-anchor="end" style="fill:var(--green);font-size:10px;font-family:var(--body)">${esc(label)}</text>`;
+  s += `<path d="${pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(p.weight).toFixed(1)}`).join(" ")}" style="fill:none;stroke:var(--mode,var(--yellow));stroke-width:2.5;stroke-linejoin:round"/>`;
+  pts.forEach((p, i) => { s += `<circle cx="${x(i).toFixed(1)}" cy="${y(p.weight).toFixed(1)}" r="${i === pts.length - 1 ? 5 : 3.5}" style="fill:var(--surface);stroke:var(--mode,var(--yellow));stroke-width:2"/>`; });
+  return `<div class="chart-box"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Évolution de ton poids">${s}</svg></div>`;
+}
+function goalHead(){
+  const m = curMode(), G = goalInfo();
+  if (m === "masse"){
+    const start = (profile.modeStart && profile.modeStart.w) || G.w, tw = profile.massTargetW || Math.round(G.w + 4), cap = profile.massCapBf || 18;
+    const pct = tw > start ? Math.max(0, Math.min(1, (G.w - start) / (tw - start))) : 1;
+    const rate = weightRate(); const left = Math.max(0, tw - G.w);
+    let tip = "";
+    if (rate != null) tip = rate > 0.5 ? `Tu prends environ ${fr(Math.round(rate * 100) / 100)} kg par semaine : c'est trop vite, surtout du gras. Retire 100 à 150 kcal par jour.` : rate < 0.1 ? `Ton poids bouge peu (${fr(Math.round(rate * 100) / 100)} kg par semaine). Ajoute 100 à 150 kcal par jour, par exemple une collation de plus.` : `Rythme idéal : environ ${fr(Math.round(rate * 100) / 100)} kg par semaine.`;
+    return `<div class="sec-title"><h2>Objectif ${fr(tw)} kg</h2><span class="pill" style="--pc:var(--mode)">${fr(G.w)} kg</span></div>
+      ${G.bf >= cap ? `<div class="goal-alert"><p class="small"><b>Plafond de ${fr(cap)} % atteint.</b> Ta masse grasse est à ${fr(G.bf)} %. C'est le moment de repasser en sèche pour garder une prise de masse propre.</p><button type="button" class="link-btn" data-mode-open>Changer de mode</button></div>` : ""}
+      <div class="goal-bar"><i style="width:${Math.round(pct * 100)}%"></i><span class="g-start">${fr(start)} kg</span><span class="g-end">${fr(tw)} kg</span></div>
+      <p class="small">${left > 0.05 ? `Encore environ <b>${fr(Math.round(left * 10) / 10)} kg</b> à prendre, à environ 0,25 kg par semaine : vers ${esc(new Date(Date.now() + left / 0.25 * 6048e5).toLocaleDateString("fr-FR", { month:"long", year:"numeric" }))}. Plafond de gras : ${fr(cap)} % (tu es à ${fr(G.bf)} %).` : "Poids visé atteint ! Passe en entretien ou en sèche pour la suite."} ${tip}</p>
+      ${weightChart(tw, `objectif ${fr(tw)} kg`)}`;
+  }
+  if (m === "entretien"){
+    const sw = profile.stableW || G.w, diff = G.w - sw;
+    return `<div class="sec-title"><h2>Poids stable : ${fr(sw)} kg</h2><span class="pill" style="--pc:${Math.abs(diff) <= 1 ? "var(--green)" : "var(--amber)"}">${diff >= 0 ? "+" : "−"}${fr(Math.round(Math.abs(diff) * 10) / 10)} kg</span></div>
+      <p class="small">${Math.abs(diff) <= 1 ? `Tu es dans ta zone (±1 kg). Continue comme ça.` : diff > 0 ? `Tu es ${fr(Math.round(diff * 10) / 10)} kg au-dessus : retire environ 150 kcal par jour pendant 2 semaines.` : `Tu es ${fr(Math.round(-diff * 10) / 10)} kg en dessous : ajoute environ 150 kcal par jour pendant 2 semaines.`} Masse grasse : ${fr(G.bf)} %.</p>
+      ${weightChart(sw, `stable ${fr(sw)} kg`)}`;
+  }
+  return null;
+}
 function goalSection(){
   const G = goalInfo(); const today = dayKey(new Date()); const ws = weighins();
+  const head = goalHead();
+  if (head) return `<section class="panel goal">${head}
+    <details class="calc"${ws.length ? "" : " open"}><summary>Nouvelle pesée</summary>
+    <div class="field-row">
+      <div class="field"><label class="label" for="wi-w">Poids (kg)</label><input id="wi-w" inputmode="decimal" placeholder="${fr(G.w)}"></div>
+      <div class="field"><label class="label" for="wi-bf">Masse grasse (%)</label><input id="wi-bf" inputmode="decimal" placeholder="${fr(G.bf)}"></div>
+    </div>
+    <div class="field"><label class="label" for="wi-date">Date</label><input id="wi-date" type="date" value="${today}" max="${today}"></div>
+    <button type="button" class="btn" id="wi-save">Enregistrer la pesée</button>
+    <p class="small muted">Pèse-toi une fois par semaine, toujours au même moment, et regarde la tendance plutôt qu'une pesée isolée.</p>
+    </details>
+    ${ws.length ? `<p class="small muted">Dernière pesée : ${esc(new Date(ws[0].date + "T12:00:00").toLocaleDateString("fr-FR", { day:"numeric", month:"long" }))}.</p>` : ""}
+  </section>`;
   return `<section class="panel goal">
     <div class="sec-title"><h2>Objectif ${profile.goalBf} % de masse grasse</h2><span class="pill" style="--pc:var(--yellow)">${fr(G.bf)} %</span></div>
     <div class="goal-bar"><i style="width:${Math.round(G.pct * 100)}%"></i><span class="g-start">${fr(profile.startBf)} %</span><span class="g-end">${profile.goalBf} %</span></div>
@@ -1693,16 +1810,21 @@ function sportSplit(key){
   return { muscu, run, padel, surf };
 }
 /* Objectif du jour = dépense du jour − 500 kcal : il monte les jours de sport. */
-function dayTarget(key){ return Math.max(DAY_FLOOR, Math.round((baseKcal() + sportOn(key) - DEFICIT) / 50) * 50); }
+function dayTarget(key){ const m = modeOn(key); const v = Math.round((baseKcal() + sportOn(key) + calorieOffset(m)) / 50) * 50; return m === "seche" ? Math.max(DAY_FLOOR, v) : v; }
 const STATUS = {
   ok:   { l:"Objectif tenu", short:"Tenu",   g:"✓", c:"var(--green)" },
-  mid:  { l:"Léger déficit", short:"Léger",  g:"~", c:"var(--amber)" },
-  over: { l:"Excédent",      short:"Excès",  g:"+", c:"var(--red)" },
+  mid:  { get l(){ const m = curMode(); return m === "masse" ? "Trop peu" : m === "entretien" ? "En dessous" : "Léger déficit"; }, short:"Léger",  g:"~", c:"var(--amber)" },
+  over: { get l(){ const m = curMode(); return m === "masse" ? "Trop mangé" : m === "entretien" ? "Au-dessus" : "Excédent"; }, short:"Excès",  g:"+", c:"var(--red)" },
   none: { l:"Non noté",      short:"—",      g:"",  c:"transparent" },
   open: { l:"Journée en cours", short:"En cours", g:"…", c:"var(--blue)" },
   inc:  { l:"Dîner non noté", short:"Incomplet", g:"?", c:"var(--amber)" }
 };
-function statusOf(intake, target, exp){ if (intake == null) return "none"; if (intake <= target + 50) return "ok"; if (intake < exp) return "mid"; return "over"; }
+function statusOf(intake, target, exp, m){
+  if (intake == null) return "none"; m = m || curMode();
+  if (m === "masse"){ if (intake < target - 200) return "mid"; if (intake > target + 250) return "over"; return "ok"; }
+  if (m === "entretien"){ if (intake < target - 200) return "mid"; if (intake > target + 200) return "over"; return "ok"; }
+  if (intake <= target + 50) return "ok"; if (intake < exp) return "mid"; return "over";
+}
 function dayRow(key){
   const doc = days()[key]; const all = mealsOf(doc);
   const meals = all.filter(m => !m.planned), plans = all.filter(m => m.planned);
@@ -1712,10 +1834,13 @@ function dayRow(key){
   const today = dayKey(new Date());
   const open = key === today && !meals.some(m => m.slot === "diner");
   const inc = !open && key < today && meals.length > 0 && !meals.some(m => m.slot === "diner") && !(doc && doc.closed);
-  return { key, sport, exp, target, intake, prot, meals, plans, all, open, inc, bal: intake == null || inc ? null : intake - exp, status: open ? "open" : inc ? "inc" : statusOf(intake, target, exp) };
+  return { key, sport, exp, target, intake, prot, meals, plans, all, open, inc, bal: intake == null || inc ? null : intake - exp, status: open ? "open" : inc ? "inc" : statusOf(intake, target, exp, modeOn(key)), mode: modeOn(key) };
 }
-function balPill(b){
+function balPill(b, n){
   if (b == null) return `<span class="pill">non saisi</span>`;
+  const m = curMode();
+  if (m === "masse") return b >= 0 ? `<span class="pill" style="--pc:var(--green)">Surplus ${kfmt(b)} kcal</span>` : `<span class="pill" style="--pc:var(--amber)">Déficit ${kfmt(-b)} kcal</span>`;
+  if (m === "entretien") return balGood(b, m, n) ? `<span class="pill" style="--pc:var(--green)">Équilibré</span>` : `<span class="pill" style="--pc:var(--amber)">${b > 0 ? "+" : "−"}${kfmt(Math.abs(b))} kcal</span>`;
   return b <= 0 ? `<span class="pill" style="--pc:var(--green)">Déficit ${kfmt(-b)} kcal</span>` : `<span class="pill" style="--pc:var(--red)">Excédent ${kfmt(b)} kcal</span>`;
 }
 function statusPill(st){ const S = STATUS[st]; return st === "none" ? `<span class="pill">Non noté</span>` : `<span class="pill" style="--pc:${S.c}">${st === "open" ? "" : S.g + " "}${S.l}</span>`; }
@@ -1765,13 +1890,16 @@ function energyBlock(key, isToday){
   const max = Math.max(r.exp, all, r.target) * 1.04;
   const left = r.target - all;
   let hero;
-  if (isToday) hero = left >= 0
+  if (isToday && r.mode === "masse") hero = left > 0
+    ? `<div class="hero-k"><span class="hk-pre">Encore à manger</span><span class="hk-v" style="color:var(--green)">${kfmt(left)}</span><span class="hk-l">kcal pour atteindre ton objectif de prise de masse</span></div>`
+    : `<div class="hero-k"><span class="hk-pre">Objectif atteint</span><span class="hk-v" style="color:${-left <= 250 ? "var(--green)" : "var(--amber)"}">+${kfmt(-left)}</span><span class="hk-l">kcal${-left <= 250 ? ", parfait" : " au-dessus : attention au gras"}</span></div>`;
+  else if (isToday) hero = left >= 0
     ? `<div class="hero-k"><span class="hk-pre">Il te reste</span><span class="hk-v" style="color:var(--green)">${kfmt(left)}</span><span class="hk-l">kcal pour tenir l'objectif du jour</span></div>`
     : `<div class="hero-k"><span class="hk-pre">Objectif dépassé de</span><span class="hk-v" style="color:${all < r.exp ? "var(--amber)" : "var(--red)"}">${kfmt(-left)}</span><span class="hk-l">kcal${all < r.exp ? ", mais toujours sous ta dépense" : ""}</span></div>`;
   else if (r.inc) hero = `<div class="hero-k"><span class="hk-pre">Journée incomplète</span><span class="hk-v" style="color:var(--amber)">?</span><span class="hk-l">Dîner non noté : le bilan attend ta réponse</span></div>`;
   else hero = r.intake == null
     ? `<div class="hero-k"><span class="hk-v muted">—</span><span class="hk-l">Rien de noté ce jour-là</span></div>`
-    : `<div class="hero-k"><span class="hk-pre">Bilan du jour</span><span class="hk-v" style="color:${r.bal <= 0 ? "var(--green)" : "var(--red)"}">${r.bal <= 0 ? "−" : "+"}${kfmt(Math.abs(r.bal))}</span><span class="hk-l">kcal ${r.bal <= 0 ? "de déficit" : "d'excédent"}</span></div>`;
+    : `<div class="hero-k"><span class="hk-pre">Bilan du jour</span><span class="hk-v" style="color:${balGood(r.bal, r.mode) ? "var(--green)" : r.mode === "seche" ? "var(--red)" : "var(--amber)"}">${r.bal <= 0 ? "−" : "+"}${kfmt(Math.abs(r.bal))}</span><span class="hk-l">kcal ${r.bal <= 0 ? "de déficit" : r.mode === "seche" ? "d'excédent" : "de surplus"}</span></div>`;
   const protNow = r.prot || 0, protAll = protNow + ghostP;
   const pPct = Math.min(100, protNow / T.prot * 100), pPlan = Math.min(100 - pPct, ghostP / T.prot * 100);
   return `<div class="energy-card">
@@ -1835,7 +1963,7 @@ function historyBlock(){
   const all = weeks.flat().filter(r => !r.future);
   const logged = all.filter(r => r.status !== "none" && r.status !== "open" && r.status !== "inc");
   const nOk = logged.filter(r => r.status === "ok").length, nMid = logged.filter(r => r.status === "mid").length, nOver = logged.filter(r => r.status === "over").length;
-  let streak = 0; for (const r of all.slice().reverse()){ if ((r.today && (r.status === "none" || r.status === "open")) || r.status === "inc") continue; if (r.status === "ok" || r.status === "mid") streak++; else break; }
+  let streak = 0; for (const r of all.slice().reverse()){ if ((r.today && (r.status === "none" || r.status === "open")) || r.status === "inc") continue; if (r.status === "ok" || (r.status === "mid" && r.mode === "seche")) streak++; else break; }
   const cell = r => {
     if (r.future) return `<span class="hm-c fut"></span>`;
     const S = STATUS[r.status];
@@ -1844,40 +1972,40 @@ function historyBlock(){
   };
   const weekSum = days7 => {
     const lg = days7.filter(r => !r.future && r.status !== "none" && r.status !== "open" && r.status !== "inc");
-    const tot = lg.reduce((a, r) => a + r.bal, 0);
+    const tot = lg.reduce((a, r) => a + r.bal, 0); const mm = curMode();
     const ses = days7.reduce((a, r) => a + sessions().filter(s => dayKey(s.date) === r.key).length, 0);
     const km = days7.reduce((a, r) => a + runs().filter(x => dayKey(x.date) === r.key).reduce((b, x) => b + (x.km || 0), 0), 0);
-    return { lg, tot, ses, km, ok: lg.filter(r => r.status === "ok").length, def: lg.filter(r => r.status !== "over").length, start: days7[0].date };
+    return { lg, tot, ses, km, mm, ok: lg.filter(r => r.status === "ok").length, def: lg.filter(r => balGood(r.bal, r.mode)).length, start: days7[0].date };
   };
   const sums = weeks.map(weekSum).reverse().filter((s, i) => i === 0 || s.lg.length || s.ses || s.km);
   const maxAbs = Math.max(500, ...sums.map(s => Math.abs(s.tot)));
   const weekRow = (s, i) => {
     const w = (Math.abs(s.tot) / maxAbs * 50).toFixed(1);
-    const isDef = s.tot <= 0;
+    const isDef = balGood(s.tot, s.mm, s.lg.length);
     return `<div class="wk">
-      <div class="wk-head"><b>${i === 0 ? "Cette semaine" : "Semaine du " + esc(s.start.toLocaleDateString("fr-FR", { day:"numeric", month:"short" }))}</b>${s.lg.length ? `<span class="${isDef ? "ok" : "ko"}">${isDef ? "−" : "+"}${kfmt(Math.abs(s.tot))} kcal</span>` : `<span class="muted">rien de noté</span>`}</div>
-      <div class="div-bar" title="Bilan de la semaine : ${isDef ? "déficit" : "excédent"} de ${kfmt(Math.abs(s.tot))} kcal"><span class="mid"></span>${s.lg.length ? `<span class="db ${isDef ? "neg" : "pos"}" style="width:${w}%"></span>` : ""}</div>
+      <div class="wk-head"><b>${i === 0 ? "Cette semaine" : "Semaine du " + esc(s.start.toLocaleDateString("fr-FR", { day:"numeric", month:"short" }))}</b>${s.lg.length ? `<span class="${isDef ? "ok" : "ko"}">${s.tot <= 0 ? "−" : "+"}${kfmt(Math.abs(s.tot))} kcal</span>` : `<span class="muted">rien de noté</span>`}</div>
+      <div class="div-bar" title="Bilan de la semaine : ${isDef ? "déficit" : "excédent"} de ${kfmt(Math.abs(s.tot))} kcal"><span class="mid"></span>${s.lg.length ? `<span class="db ${s.tot <= 0 ? "neg" : "pos"}" style="width:${w}%;${isDef ? "" : "opacity:.85"}"></span>` : ""}</div>
       <div class="wk-stats">
-        <span><b>${s.def}/${s.lg.length}</b> jours en déficit</span>
+        <span><b>${s.def}/${s.lg.length}</b> jours ${s.mm === "seche" ? "en déficit" : s.mm === "masse" ? "en surplus" : "équilibrés"}</span>
         <span><b>${s.ok}</b> objectif tenu</span>
-        <span><b>${isDef && s.lg.length ? fr(Math.round(-s.tot / 7.7)) : 0} g</b> de gras</span>
+        ${s.mm === "seche" ? `<span><b>${s.tot <= 0 && s.lg.length ? fr(Math.round(-s.tot / 7.7)) : 0} g</b> de gras</span>` : ""}
         <span><b>${s.ses}</b> séance${s.ses > 1 ? "s" : ""}${s.km ? ` · <b>${fr(Math.round(s.km * 10) / 10)}</b> km` : ""}</span>
       </div>
     </div>`;
   };
   return `<section class="panel">
-    <div class="sec-title"><h2>Ton historique</h2>${streak ? `<span class="pill" style="--pc:var(--green)">${streak} jour${streak > 1 ? "s" : ""} de suite en déficit</span>` : ""}</div>
+    <div class="sec-title"><h2>Ton historique</h2>${streak ? `<span class="pill" style="--pc:var(--green)">${streak} jour${streak > 1 ? "s" : ""} de suite ${curMode() === "seche" ? "en déficit" : "dans l'objectif"}</span>` : ""}</div>
     <div class="hm-stats">
       <div class="hs ok"><span class="v">${nOk}</span><span class="k">Objectif tenu</span></div>
-      <div class="hs mid"><span class="v">${nMid}</span><span class="k">Léger déficit</span></div>
-      <div class="hs over"><span class="v">${nOver}</span><span class="k">Excédent</span></div>
+      <div class="hs mid"><span class="v">${nMid}</span><span class="k">${STATUS.mid.l}</span></div>
+      <div class="hs over"><span class="v">${nOver}</span><span class="k">${STATUS.over.l}</span></div>
     </div>
     <div class="hm" role="img" aria-label="Calendrier des 6 dernières semaines">
       ${["L","M","M","J","V","S","D"].map(x => `<span class="hm-h">${x}</span>`).join("")}
       ${weeks.map(w => w.map(cell).join("")).join("")}
     </div>
-    <div class="hm-legend"><span><i class="st-ok"></i>Objectif tenu</span><span><i class="st-mid"></i>Léger déficit</span><span><i class="st-over"></i>Excédent</span><span><i class="st-inc"></i>Dîner non noté</span><span><i class="st-none"></i>Non noté</span></div>
-    <p class="small muted">« Objectif tenu » : au moins ~450 kcal sous ta dépense. « Léger déficit » : sous ta dépense, mais moins que prévu.</p>
+    <div class="hm-legend"><span><i class="st-ok"></i>Objectif tenu</span><span><i class="st-mid"></i>${STATUS.mid.l}</span><span><i class="st-over"></i>${STATUS.over.l}</span><span><i class="st-inc"></i>Dîner non noté</span><span><i class="st-none"></i>Non noté</span></div>
+    <p class="small muted">${{ seche: "« Objectif tenu » : au moins ~450 kcal sous ta dépense. « Léger déficit » : sous ta dépense, mais moins que prévu.", masse: "« Objectif tenu » : entre 200 kcal sous et 250 kcal au-dessus de ton objectif. En dessous, pas assez pour construire ; au-dessus, ça part en gras.", entretien: "« Objectif tenu » : à ±200 kcal de ta dépense." }[curMode()]}</p>
     <p class="label" style="margin-top:6px">Synthèse par semaine</p>
     <div class="wks">${sums.map(weekRow).join("")}</div>
   </section>`;
@@ -1902,7 +2030,7 @@ function todayStrip(){
     <span class="ts-nums">
       <span><i>Dépense</i><b>${kfmt(r.exp)}</b></span>
       <span><i>Mangé</i><b>${kfmt(r.intake || 0)}</b></span>
-      <span><i>${R.kcal < 0 ? "Dépassé" : R.gB || R.gM ? "Pour ce soir" : "Reste"}</i><b style="color:${R.kcal >= 0 ? "var(--green)" : "var(--red)"}">${kfmt(Math.abs(R.kcal))}</b></span>
+      <span><i>${R.kcal < 0 ? (curMode() === "masse" ? "Au-dessus" : "Dépassé") : curMode() === "masse" ? "À manger" : R.gB || R.gM ? "Pour ce soir" : "Reste"}</i><b style="color:${R.kcal >= 0 ? "var(--green)" : "var(--red)"}">${kfmt(Math.abs(R.kcal))}</b></span>
     </span>
     ${segBar([{ l:"Mangé", v:r.intake || 0, c:"#ffc93c" }, { l:"Prévu", v:R.guess, c:"#ffc93c", ghost:true }], max, [{ v:r.target, cls:"tgt", l:"Objectif du jour" }, { v:r.exp, cls:"exp", l:"Dépense" }])}
     <span class="ts-foot">Objectif du jour ${kfmt(r.target)} kcal${r.sport ? ` (+${kfmt(r.sport)} grâce au sport)` : ""} · voir la nutrition →</span>
@@ -2008,7 +2136,8 @@ function scaleDinner(d, B, pNeed, train){
   const tot = list => list.reduce((a, x) => ({ k: a.k + x.g * x.k / 100, p: a.p + x.g * x.p / 100 }), { k: 0, p: 0 });
   const P = tot(d.items.filter(x => x.r === "p")), C = tot(d.items.filter(x => x.r === "c")), F = tot(d.items.filter(x => x.r === "v" || x.r === "f"));
   let fp = P.p ? Math.min(1.3, Math.max(0.85, pNeed / Math.max(1, P.p + C.p + F.p))) : 1;
-  let fc = C.k ? Math.min(train ? 1.6 : 1.3, Math.max(0, (B - F.k - P.k * fp) / C.k)) : 0;
+  const cap = curMode() === "masse" ? 2.3 : train ? 1.6 : 1.3;
+  let fc = C.k ? Math.min(cap, Math.max(0, (B - F.k - P.k * fp) / C.k)) : 0;
   if (fc < 0.35) fc = 0;
   if (F.k + P.k * fp + C.k * fc > B && P.k) fp = Math.max(0.8, Math.min(fp, (B - F.k - C.k * fc) / P.k));
   const items = d.items.map(x => {
@@ -2170,12 +2299,30 @@ const SNACKS = [
   { id:"pomme",  name:"Une pomme et 15 amandes", kcal:190, prot:5 },
   { id:"banane", name:"Une banane", kcal:105, prot:1 }
 ];
+const MASS_SNACKS = [
+  { id:"fb-avoine", name:"Fromage blanc (200 g), flocons d'avoine (40 g) et une banane", kcal:400, prot:26 },
+  { id:"sandwich", name:"Sandwich jambon-emmental (un tiers de baguette)", kcal:450, prot:26 },
+  { id:"skyr-granola", name:"Skyr (150 g) et granola (50 g)", kcal:320, prot:20 },
+  { id:"lait-pb", name:"Lait demi-écrémé (300 ml) et 2 tartines au beurre de cacahuète", kcal:480, prot:22 },
+  { id:"oeufs-pain", name:"2 œufs durs, une tartine de pain complet et une pomme", kcal:330, prot:17 },
+  { id:"amandes", name:"30 g d'amandes et une banane", kcal:280, prot:8 }
+];
 function snackPlan(){
   const key = dayKey(new Date()); const r = dayRow(key);
   if (r.all.some(m => m.slot === "collation")) return { state: "done" };
   const R = remainingToday("collation");
   const dinnerAny = r.all.some(m => m.slot === "diner"), dinnerEaten = r.meals.some(m => m.slot === "diner");
   const hNow = new Date().getHours() + new Date().getMinutes() / 60;
+  if (curMode() === "masse"){
+    if (hNow >= 22) return { state: "late" };
+    const dinK = dinnerAny ? 0 : (dinnerEaten ? 0 : Math.min(750, Math.max(500, R.kcal * 0.6)));
+    const room = Math.min(550, R.kcal - dinK);
+    if (room < 200) return { state: "masse-ok", room, left: R.kcal, assumedDinner: !dinnerAny, dinK, options: [] };
+    const normS = x => String(x || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const badS = normS(profile.dislikes).split(/[,;\n]| et /).map(x => x.trim().replace(/s$/, "")).filter(x => x.length > 2);
+    const opts = MASS_SNACKS.concat(SNACKS.filter(x => x.prot >= 15)).filter(x => !badS.some(b => normS(x.name).includes(b)) && x.kcal <= room + 120).sort((a, b) => Math.abs(room - a.kcal) - Math.abs(room - b.kcal));
+    return { state: "masse", room, left: R.kcal, dinK, assumedDinner: !dinnerAny, gapP: R.p, options: opts.slice(0, 3) };
+  }
   if (dinnerEaten || hNow >= 18.5) return { state: "late" };
   const dinK = dinnerAny ? 0 : Math.max(250, Math.min(400, R.kcal));
   const dinP = dinnerAny ? 0 : 45;
@@ -2205,7 +2352,9 @@ function snackBlock(){
     maybe: ["info", "Pas indispensable", `Tes protéines sont couvertes ${dinTxt}. Si tu as faim, tu as ${kfmt(P.room)} kcal de marge.`],
     keep:  ["muted", "Garde ta marge pour le dîner", `Il te reste ${kfmt(P.left)} kcal : mieux vaut tout garder pour un dîner riche en protéines.`],
     over:  ["muted", "Pas de collation aujourd'hui", `${P.assumedDinner ? "Ta journée" : "Avec ton dîner prévu, ta journée"} dépasse déjà l'objectif de ${kfmt(P.over)} kcal. ${P.gapP >= 20 ? "Pour tes protéines, prends plutôt une portion de viande ou de poisson plus grosse au dîner, avec moins de féculents." : ""}`],
-    no:    ["muted", "Pas besoin aujourd'hui", `Tes repas utilisent ta marge ${dinTxt}. Si la faim arrive, commence par un grand verre d'eau.`]
+    no:    ["muted", "Pas besoin aujourd'hui", `Tes repas utilisent ta marge ${dinTxt}. Si la faim arrive, commence par un grand verre d'eau.`],
+    masse: ["ok", "Ta collation de prise de masse", `Pour atteindre ton objectif sans te forcer au dîner, place environ ${kfmt(Math.round(P.room / 10) * 10)} kcal ici${P.assumedDinner ? ` en gardant ${kfmt(P.dinK)} kcal pour ton dîner` : ""}.`],
+    "masse-ok": ["info", "Collation facultative", `Ton dîner suffit à atteindre l'objectif. Si tu as faim, prends un skyr ou un fruit.`]
   }[P.state];
   return `<div class="snack ${head[0]}">
     <p class="snack-h"><b>${head[1]}</b></p>
@@ -2310,11 +2459,11 @@ function viewNutIdees(){
     <section class="panel">
       <div class="sec-title"><h2>Ce soir, je mange quoi ?</h2></div>
       <div class="budget">
-        <div><span class="v"${R.kcal < 0 ? ' style="color:var(--red)"' : ""}>${kfmt(Math.abs(R.kcal))}</span><span class="k">${R.kcal >= 0 ? "kcal pour le dîner" : "kcal déjà au-dessus de l'objectif"}</span></div>
+        <div><span class="v"${R.kcal < 0 ? ' style="color:var(--red)"' : ""}>${kfmt(Math.abs(R.kcal))}</span><span class="k">${R.kcal >= 0 ? (curMode() === "masse" ? "kcal à manger ce soir" : "kcal pour le dîner") : "kcal déjà au-dessus de l'objectif"}</span></div>
         <div><span class="v">${R.p}</span><span class="k">g de protéines à trouver</span></div>
       </div>
-      <p class="small muted">${R.guessText}${R.sport ? "Tu t'es entraîné aujourd'hui : je privilégie les dîners avec féculents pour bien récupérer." : "Jour sans sport : les dîners plus légers en féculents passent très bien."}</p>
-      ${dinnerAdvice(R, ideas)}
+      <p class="small muted">${R.guessText}${curMode() === "masse" ? "Prise de masse : je garde des féculents généreux à chaque dîner." : R.sport ? "Tu t'es entraîné aujourd'hui : je privilégie les dîners avec féculents pour bien récupérer." : "Jour sans sport : les dîners plus légers en féculents passent très bien."}</p>
+      ${curMode() === "masse" && R.kcal > -250 ? "" : dinnerAdvice(R, ideas)}
       ${nut.idea ? dinnerCard(nut.idea, true, R) : ""}
       ${ideas.map(d => dinnerCard(d, false, R)).join("")}
       ${R.kcal - (ideas[0] ? ideas[0].kcal : 0) > 200 ? `<p class="small">Il te restera de la marge : ajoute un dessert protéiné, par exemple 150 g de fromage blanc 0 % et des fruits rouges (environ 120 kcal et 12 g de protéines).</p>` : ""}
@@ -2329,25 +2478,40 @@ function viewNutBilan(){
   const logged = rows.filter(r => !r.future && r.bal != null && !r.open);
   const weekBal = logged.reduce((a, r) => a + r.bal, 0);
   const fatKg = Math.max(0, -weekBal) / 7700;
+  const M0 = curMode();
+  const weekTxt = !logged.length ? "Note tes repas pour voir ton bilan de la semaine."
+    : M0 === "masse" ? `Sur ${logged.length} jour${logged.length > 1 ? "s" : ""} saisi${logged.length > 1 ? "s" : ""}, tu es en moyenne à ${weekBal >= 0 ? "+" : "−"}${kfmt(Math.abs(weekBal / logged.length))} kcal par jour par rapport à ta dépense. La cible : environ +${SURPLUS}.`
+    : M0 === "entretien" ? `Sur ${logged.length} jour${logged.length > 1 ? "s" : ""} saisi${logged.length > 1 ? "s" : ""}, écart moyen de ${weekBal >= 0 ? "+" : "−"}${kfmt(Math.abs(weekBal / logged.length))} kcal par jour avec ta dépense. Tout ce qui reste sous ±200 est parfait.`
+    : `Sur ${logged.length} jour${logged.length > 1 ? "s" : ""} saisi${logged.length > 1 ? "s" : ""}, ça représente environ ${fr(Math.round(fatKg * 100) / 100)} kg de gras.`;
   return `
     <section class="panel">
-      <div class="sec-title"><h2>Cette semaine, jour par jour</h2>${logged.length ? balPill(weekBal) : ""}</div>
+      <div class="sec-title"><h2>Cette semaine, jour par jour</h2>${logged.length ? balPill(weekBal, logged.length) : ""}</div>
       <div class="chart-box">${weekChart(rows, T)}</div>
       <div class="legend"><span><i style="background:var(--blue)"></i>Dépense</span><span><i style="background:var(--yellow)"></i>Apport</span><span><i class="dash"></i>Objectif du jour</span></div>
-      <ul class="days">${rows.filter(r => !r.future).map(r => `<li><span>${esc(r.label)}${r.sport ? ` · sport ${kfmt(r.sport)}` : ""}</span><span>${kfmt(r.exp)} → ${r.intake == null ? "?" : kfmt(r.intake)}</span><span>${r.open ? `<i class="muted">en cours</i>` : r.inc ? `<i class="muted">dîner ?</i>` : r.bal == null ? "" : (r.bal <= 0 ? `<b class="ok">−${kfmt(-r.bal)}</b>` : `<b class="ko">+${kfmt(r.bal)}</b>`)}</span></li>`).join("")}</ul>
-      <p class="small muted">${logged.length ? `Sur ${logged.length} jour${logged.length > 1 ? "s" : ""} saisi${logged.length > 1 ? "s" : ""}, ça représente environ ${fr(Math.round(fatKg * 100) / 100)} kg de gras.` : "Note tes repas pour voir ton bilan de la semaine."}</p>
+      <ul class="days">${rows.filter(r => !r.future).map(r => `<li><span>${esc(r.label)}${r.sport ? ` · sport ${kfmt(r.sport)}` : ""}</span><span>${kfmt(r.exp)} → ${r.intake == null ? "?" : kfmt(r.intake)}</span><span>${r.open ? `<i class="muted">en cours</i>` : r.inc ? `<i class="muted">dîner ?</i>` : r.bal == null ? "" : `<b class="${balGood(r.bal, r.mode) ? "ok" : "ko"}">${r.bal <= 0 ? "−" : "+"}${kfmt(Math.abs(r.bal))}</b>`}</span></li>`).join("")}</ul>
+      <p class="small muted">${weekTxt}</p>
     </section>
 
     ${historyBlock()}
 
     <section class="panel">
-      <details class="calc strat"><summary>Ta stratégie de sèche</summary>
-      <div class="plan">
+      <details class="calc strat"><summary>Ta stratégie de ${MODES[curMode()].long.toLowerCase()}</summary>
+      ${curMode() === "masse" ? `<div class="plan">
+        <div><b>Petit-déj · ~${profile.breakfast ? profile.breakfast.kcal + 150 : 600} kcal</b><span>${profile.breakfast ? "Ton petit-déj habituel, plus un skyr ou un verre de lait pour démarrer avec des protéines." : "Un vrai petit-déj : flocons d'avoine, lait, fruit et une source de protéines."}</span></div>
+        <div><b>Midi · ~900 kcal</b><span>Plat complet avec une vraie portion de viande ou de poisson et des féculents. Pas de salade seule.</span></div>
+        <div><b>Collation · ~350 kcal</b><span>Indispensable en prise de masse : c'est elle qui rend le surplus facile à tenir sans te gaver au dîner.</span></div>
+        <div><b>Dîner · ~700 kcal</b><span>Protéine, féculents généreux, légumes que tu aimes. Les jours de séance, encore un peu plus de féculents.</span></div>
+      </div>` : curMode() === "entretien" ? `<div class="plan">
+        <div><b>Petit-déj · ~${profile.breakfast ? profile.breakfast.kcal : 450} kcal</b><span>${profile.breakfast ? "Ton petit-déj habituel, sans rien changer." : "Ton petit-déj habituel, avec si possible une source de protéines."}</span></div>
+        <div><b>Midi · ~850 kcal</b><span>Comme tu veux, avec toujours une source de protéines.</span></div>
+        <div><b>Collation · facultative, ~200 kcal</b><span>Si tu as faim ou s'il te manque des protéines.</span></div>
+        <div><b>Dîner · ~650 kcal</b><span>Équilibré. Si la journée a été chargée, allège ; si elle a été légère, fais-toi plaisir.</span></div>
+      </div>` : `<div class="plan">
         <div><b>Petit-déj · ~${profile.breakfast ? profile.breakfast.kcal : 400} kcal</b><span>${profile.breakfast ? `Ton petit-déj habituel : ${esc(profile.breakfast.label)}. ${profile.breakfast.prot < 25 ? "Il apporte peu de protéines : compense sur le reste de la journée." : ""}` : "Mets des protéines dès le matin : un skyr et des flocons d'avoine, ou des œufs et du pain complet."}</span></div>
         <div><b>Midi · ~750 kcal</b><span>Resto, cantine ou plat acheté. Ajoute toujours une source de protéines, comme du blanc de poulet en tranches.</span></div>
         <div><b>Collation · facultative, ~150 kcal</b><span>Seulement si tu as faim l'après-midi ou s'il te manque des protéines : un skyr ou 200 g de fromage blanc 0 %. Sinon, mets ces protéines dans ton dîner.</span></div>
         <div><b>Dîner · ~450 kcal</b><span>Le repas que tu maîtrises : protéine maigre, légumes que tu aimes, féculents les jours de séance.</span></div>
-      </div>
+      </div>`}
       <p class="label">Pour booster les protéines du midi</p>
       <ul class="rules-list">
         <li>Blanc de poulet en tranches, 100 g : environ 110 kcal et 23 g de protéines.</li>
@@ -2376,10 +2540,11 @@ function viewNutBilan(){
 
     <section class="panel">
       <details class="calc"><summary>Comment c'est calculé</summary>
-        <p class="small">Ton métabolisme de base est calculé à partir de ta masse maigre (formule de Katch-McArdle) : ${kfmt(bmr())} kcal. On le multiplie par ton niveau d'activité hors sport. Une séance de muscu compte environ ${kfmt(MET_MUSCU_NET * profile.weight)} kcal par heure au-delà du repos, et un run environ ${fr(Math.round(profile.weight * 0.9))} kcal par km. L'objectif du jour, c'est ta dépense du jour moins ${DEFICIT} kcal : il monte automatiquement les jours de séance ou de run, et les idées de dîner s'ajustent à ce qu'il te reste.</p>
+        <p class="small">Ton métabolisme de base est calculé à partir de ta masse maigre (formule de Katch-McArdle) : ${kfmt(bmr())} kcal. On le multiplie par ton niveau d'activité hors sport. Une séance de muscu compte environ ${kfmt(MET_MUSCU_NET * profile.weight)} kcal par heure au-delà du repos, et un run environ ${fr(Math.round(profile.weight * 0.9))} kcal par km. L'objectif du jour, c'est ta dépense du jour ${{ seche: `moins ${DEFICIT} kcal`, masse: `plus ${SURPLUS} kcal`, entretien: "sans déficit ni surplus" }[curMode()]} : il monte automatiquement les jours de séance ou de run, et les idées de dîner s'ajustent à ce qu'il te reste.</p>
         <p class="small muted">Ce sont des estimations, avec une marge d'erreur de 10 à 15 %, et les estimations de repas aussi. Le vrai juge, c'est la tendance de ton poids sur 2 à 3 semaines : si elle ne baisse pas, retire 100 à 150 kcal à ton objectif.</p>
       </details>
       <details class="calc"><summary>Mes paramètres</summary>
+      <p class="small">Mode actuel : <b style="color:var(--mode)">${MODES[curMode()].long}</b>. <button type="button" class="link-btn" data-mode-open>Changer de mode</button></p>
       <div class="field-row">
         <div class="field"><label class="label" for="prof-w">Poids (kg)</label><input id="prof-w" inputmode="decimal" value="${fr(profile.weight)}"></div>
         <div class="field"><label class="label" for="prof-bf">Masse grasse (%)</label><input id="prof-bf" inputmode="decimal" value="${fr(profile.bf)}"></div>
@@ -2758,6 +2923,62 @@ function runDemo(id){
   })(t0);
 }
 let lastFocus = null;
+let modePick = null;
+function openModeSheet(){
+  lastFocus = document.activeElement; modePick = null;
+  $("#sheet").hidden = false; document.body.style.overflow = "hidden";
+  renderModeSheet();
+}
+function renderModeSheet(){
+  const cur = curMode(), pick = modePick;
+  const G = goalInfo(), w = G.w, bf = G.bf;
+  let cfg = "";
+  if (pick && pick !== cur){
+    if (pick === "masse") cfg = `<div class="mode-cfg"><p class="small">Ton objectif de prise de masse :</p>
+      <div class="field-row">
+        <div class="field"><label class="label" for="md-w">Poids visé (kg)</label><input id="md-w" inputmode="decimal" value="${fr(profile.massTargetW || Math.round(w + 4))}"></div>
+        <div class="field"><label class="label" for="md-cap">Plafond de gras (%)</label><input id="md-cap" inputmode="decimal" value="${fr(profile.massCapBf && profile.massCapBf > bf ? profile.massCapBf : Math.min(25, Math.max(15, Math.round(bf) + 3)))}"></div>
+      </div>
+      ${bf > 16 ? `<p class="small mode-warn">À ${fr(bf)} % de masse grasse, l'approche de Nassim Sahili conseille plutôt de finir ta sèche (vers 13–15 %) avant de lancer une prise de masse : tu prendras plus de muscle et moins de gras.</p>` : ""}
+      <p class="small muted">Au-delà du plafond, l'appli te conseille de repasser en sèche. Au rythme conseillé (+1 kg par mois), ${fr(Math.max(0, (profile.massTargetW || Math.round(w + 4)) - w))} kg prennent environ ${Math.max(1, Math.round(Math.max(0, (profile.massTargetW || Math.round(w + 4)) - w)))} mois.</p></div>`;
+    else if (pick === "entretien") cfg = `<div class="mode-cfg"><p class="small">Le poids à garder :</p>
+      <div class="field"><label class="label" for="md-stable">Poids stable (kg)</label><input id="md-stable" inputmode="decimal" value="${fr(profile.stableW || Math.round(w * 2) / 2)}"></div>
+      <p class="small muted">L'appli surveille que tu restes à ±1 kg de ce poids.</p></div>`;
+    else cfg = `<div class="mode-cfg"><p class="small">Ton objectif de sèche :</p>
+      <div class="field"><label class="label" for="md-goal">Masse grasse visée (%)</label><input id="md-goal" inputmode="decimal" value="${fr(profile.goalBf || Math.max(10, Math.round(bf - 5)))}"></div></div>`;
+    cfg += `<button type="button" class="primary" id="mode-go">Passer en ${MODES[pick].long.toLowerCase()}</button>
+      <p class="small muted">Ton historique, tes records et ton niveau sont gardés. Les jours passés restent jugés selon le mode de l'époque.</p>`;
+  }
+  $("#sheet-body").style.setProperty("--sc", MODES[pick || cur].c);
+  $("#sheet-body").innerHTML = `
+    <span class="grab" aria-hidden="true"></span>
+    <div class="sheet-head"><div><p class="label">Ton objectif du moment</p><h2 id="sheet-title">Changer de mode</h2></div><button type="button" class="close-btn" data-close aria-label="Fermer">×</button></div>
+    <div class="mode-list">${Object.keys(MODES).map(k => `<button type="button" class="mode-opt" data-mode-pick="${k}" style="--mc:${MODES[k].c}" aria-pressed="${(pick || cur) === k}">${k === cur ? `<span class="cur">Mode actuel</span>` : ""}<b>${MODES[k].long}</b><span>${MODES[k].desc}</span></button>`).join("")}</div>
+    ${cfg}`;
+}
+function applyMode(){
+  const pick = modePick, cur = curMode(); if (!pick || pick === cur) return;
+  const val = id => { const el = $(id); return el ? num(el.value) : null; };
+  const G = goalInfo(); const today = dayKey(new Date());
+  if (pick === "masse"){
+    const tw = val("#md-w"), cap = val("#md-cap");
+    if (tw == null || tw <= G.w - 0.5 || tw > G.w + 25){ toast("Indique un poids visé au-dessus de ton poids actuel"); return; }
+    if (cap == null || cap <= G.bf || cap > 30){ toast(`Indique un plafond de gras au-dessus de ton taux actuel (${fr(G.bf)} %)`); return; }
+    profile.massTargetW = tw; profile.massCapBf = cap;
+  } else if (pick === "entretien"){
+    const sw = val("#md-stable"); if (sw == null || sw < 35 || sw > 200){ toast("Indique ton poids stable"); return; }
+    profile.stableW = sw;
+  } else {
+    const g = val("#md-goal"); if (g == null || g < 6 || g >= G.bf){ toast("Indique une masse grasse visée sous ton taux actuel"); return; }
+    profile.goalBf = g; profile.startBf = G.bf; profile.startWeight = G.w;
+  }
+  const h = (profile.modes || []).filter(x => x.since < today);
+  if (!h.length) h.push({ mode: cur, since: "2000-01-01" });
+  h.push({ mode: pick, since: today });
+  profile.modes = h; profile.mode = pick; profile.modeStart = { w: G.w, bf: G.bf, date: today };
+  saveProfile(); closeSheet(); render(); window.scrollTo(0, 0);
+  toast(`Mode ${MODES[pick].long.toLowerCase()} activé · objectif du jour ${kfmt(dayTarget(today))} kcal`);
+}
 function openSheet(id){
   const exo = ALL_EXOS[id], inf = INFO[id]; if (!exo || !inf) return;
   const type = PROGRAM.A.exos.includes(exo) ? "A" : "B";
@@ -2786,7 +3007,12 @@ function closeSheet(){
   $("#sheet").hidden = true; document.body.style.overflow = "";
   if (lastFocus && lastFocus.focus) lastFocus.focus();
 }
-$("#sheet").addEventListener("click", e => { if (e.target.closest("[data-close]")) closeSheet(); });
+$("#sheet").addEventListener("click", e => {
+  if (e.target.closest("[data-close]")){ closeSheet(); return; }
+  const mp = e.target.closest("[data-mode-pick]"); if (mp){ modePick = mp.dataset.modePick; renderModeSheet(); const go = $("#mode-go"); if (go) go.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" }); return; }
+  if (e.target.closest("#mode-go")) applyMode();
+});
+$("#mode-btn").addEventListener("click", openModeSheet);
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#sheet").hidden) closeSheet(); });
 
 /* ---------- Toast et confettis ---------- */
@@ -2865,12 +3091,12 @@ main.addEventListener("click", async e => {
   if (t.id === "edit-profile"){ editingProfile = true; render(); window.scrollTo(0, 0); return; }
   if (t.id === "data-export"){ exportData(); return; }
   if (t.dataset.info){ openSheet(t.dataset.info); return; }
-  if (t.dataset.restToggle){ const id = t.dataset.restToggle, exo = ALL_EXOS[id]; ensureAudio(); if (tm.exo === id && tm.state === "run") pauseRest(); else if (tm.exo === id && tm.state === "pause") resumeRest(); else startRest(exo.rest, exo.name, id); return; }
-  if (t.dataset.restReset){ const id = t.dataset.restReset, exo = ALL_EXOS[id]; ensureAudio(); startRest(exo.rest, exo.name, id); return; }
+  if (t.dataset.restToggle){ const id = t.dataset.restToggle, exo = effById(id); ensureAudio(); if (tm.exo === id && tm.state === "run") pauseRest(); else if (tm.exo === id && tm.state === "pause") resumeRest(); else startRest(exo.rest, exo.name, id); return; }
+  if (t.dataset.restReset){ const id = t.dataset.restReset, exo = effById(id); ensureAudio(); startRest(exo.rest, exo.name, id); return; }
   if (t.dataset.start){ startSession(t.dataset.start); return; }
   if (t.classList.contains("done-btn")){
     const row = t.closest(".set"); const exoId = row.dataset.exo; const i = +row.dataset.i;
-    const exo = ALL_EXOS[exoId]; const s = draft.sets[exoId][i];
+    const exo = effById(exoId); const s = draft.sets[exoId][i];
     if (!s.done){
       const reps = row.querySelector(".f-reps");
       if (num(reps.value) == null){ reps.focus(); toast("Indique tes reps avant de valider"); return; }
@@ -2904,6 +3130,7 @@ main.addEventListener("click", async e => {
   if (t.id === "finish"){ finishSession(); return; }
   if (t.id === "finish-anyway"){ finishSession(true); return; }
   if (t.id === "finish-back"){ const m = $("#finish-msg"); m.hidden = true; m.className = "msg"; const first = [...main.querySelectorAll(".exo:not(.mini)")][0]; if (first) first.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" }); return; }
+  if (t.dataset.modeOpen !== undefined){ openModeSheet(); return; }
   if (t.dataset.histAll !== undefined){ histAll = !histAll; render(); return; }
   if (t.dataset.expand){ openDone.add(t.dataset.expand); render(); return; }
   if (t.dataset.closeDay){
@@ -3343,7 +3570,7 @@ render();
     if (!snap.exists) return;
     const d = snap.data();
     if (d.weight && d.bf && d.activity){
-      for (const k of ["weight","bf","activity","startWeight","startBf","goalBf","dislikes","likes","hidden","breakfast"]) if (d[k] !== undefined && d[k] !== null) profile[k] = d[k];
+      for (const k of ["weight","bf","activity","startWeight","startBf","goalBf","dislikes","likes","hidden","breakfast","mode","modes","massTargetW","massCapBf","stableW","modeStart"]) if (d[k] !== undefined && d[k] !== null) profile[k] = d[k];
       LS.set("carnet.cache.profile", profile); if (!(draft && tab === "seance")) render();
     }
   }, () => {});
