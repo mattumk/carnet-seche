@@ -963,16 +963,23 @@ let cloudActs = LS.get("carnet.cache.acts", []);
 /* MET bruts du Compendium : padel en double ~5, en simple ~7, surf (temps à l'eau) ~3,5. On compte la part au-delà du repos (MET − 1). */
 const ACT = {
   padel: { l:"Padel", c:"var(--blue)", met: a => a.format === "simple" ? 7 : 5 },
-  surf:  { l:"Surf",  c:"var(--green)", met: () => 3.5 }
+  surf:  { l:"Surf",  c:"var(--green)", met: () => 3.5 },
+  tapis: { l:"Tapis", c:"var(--amber)", met: () => 1 }
 };
 function acts(){
   if (!pending.acts) pending.acts = [];
   const ids = new Set(cloudActs.map(a => a.id));
   return cloudActs.concat(pending.acts.filter(a => !ids.has(a.id)).map(a => ({ ...a, _pending:true }))).sort((a, b) => b.date.localeCompare(a.date));
 }
-function actKcal(a){ const A0 = ACT[a.kind]; if (!A0) return 0; return Math.round((A0.met(a) - 1) * ((profile && profile.weight) || 75) * (a.minutes || 0) / 60); }
+/* Marche inclinée : équation de marche de l'ACSM, part au-delà du repos.
+   VO2 net (ml/kg/min) = 0,1 × vitesse (m/min) + 1,8 × vitesse × pente ; 1 L d'O2 ≈ 5 kcal. */
+function tapisKcal(min, incline, speed, w){
+  const v = (speed || 5) * 1000 / 60, g = Math.max(0, incline || 0) / 100;
+  return Math.round((0.1 * v + 1.8 * v * g) * (w || 75) / 1000 * 5 * (min || 0));
+}
+function actKcal(a){ if (a.kind === "tapis") return tapisKcal(a.minutes, a.incline, a.speed, (profile && profile.weight) || 75); const A0 = ACT[a.kind]; if (!A0) return 0; return Math.round((A0.met(a) - 1) * ((profile && profile.weight) || 75) * (a.minutes || 0) / 60); }
 function actXp(a){ return Math.round((a.minutes || 0) * 0.8); }
-function actLabel(a){ return a.kind === "padel" ? `Padel ${a.format === "simple" ? "en simple" : "en double"}` : (ACT[a.kind] || { l:"Sport" }).l; }
+function actLabel(a){ if (a.kind === "tapis") return `Marche inclinée ${fr(a.incline ?? 10)} % · ${fr(a.speed ?? 5)} km/h`; return a.kind === "padel" ? `Padel ${a.format === "simple" ? "en simple" : "en double"}` : (ACT[a.kind] || { l:"Sport" }).l; }
 function runs(){
   const ids = new Set(cloudRuns.map(r => r.id));
   return cloudRuns.concat(pending.runs.filter(r => !ids.has(r.id)).map(r => ({ ...r, _pending:true }))).sort((a,b) => b.date.localeCompare(a.date));
@@ -1754,7 +1761,7 @@ function viewRun(){
   const wkRuns = runs().filter(r => r.date >= ws), wkActs = acts().filter(a => a.date >= ws);
   const wkKcal = wkRuns.reduce((x, r) => x + runKcalOf(r), 0) + wkActs.reduce((x, a) => x + actKcal(a), 0);
   const recent = runs().map(r => ({ k:"r", date:r.date, r })).concat(acts().map(a => ({ k:"a", date:a.date, a }))).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
-  const kinds = [["run","Run"],["padel","Padel"],["surf","Surf"]];
+  const kinds = [["run","Run"],["tapis","Tapis"],["padel","Padel"],["surf","Surf"]];
   let form;
   if (sportKind === "run") form = `
       <div class="field-row">
@@ -1769,6 +1776,19 @@ function viewRun(){
       <p class="msg" id="run-msg" hidden></p>
       <button type="button" class="primary" id="run-save">Enregistrer le run</button>
       <p class="small muted">${XP.km} XP par km, 1,5 fois plus en fractionné. Environ ${fr(Math.round(profile.weight * 0.9))} kcal par km.</p>`;
+  else if (sportKind === "tapis") form = `
+      <div class="field-row">
+        <div class="field"><label class="label" for="act-min">Durée (min)</label><input id="act-min" inputmode="numeric" value="30"></div>
+        <div class="field"><label class="label" for="act-date">Date</label><input id="act-date" type="date" value="${today}" max="${today}"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label class="label" for="act-inc">Pente (%)</label><input id="act-inc" inputmode="decimal" value="10"></div>
+        <div class="field"><label class="label" for="act-speed">Vitesse (km/h)</label><input id="act-speed" inputmode="decimal" value="5"></div>
+      </div>
+      <p class="small" id="act-est">≈ <b>${kfmt(tapisKcal(30, 10, 5, profile.weight))} kcal</b> pour 30 min à 10 % et 5 km/h</p>
+      <div class="field"><label class="label" for="act-note">Ressenti</label><input id="act-note" placeholder="Ex. 12 % à 5 km/h, sans me tenir"></div>
+      <button type="button" class="primary" id="act-save">Enregistrer le tapis</button>
+      <p class="small muted">La pente compte énormément : à 5 km/h, passer de 5 % à 12 % double presque la dépense. Ne te tiens pas aux barres, sinon tu brûles 20 à 30 % de moins que l'estimation. 0,8 XP par minute.</p>`;
   else form = `
       <div class="field-row">
         <div class="field"><label class="label" for="act-min">${sportKind === "surf" ? "Temps à l'eau (min)" : "Durée (min)"}</label><input id="act-min" inputmode="numeric" value="${sportKind === "padel" ? 90 : ""}" placeholder="${sportKind === "surf" ? "120" : "90"}"></div>
@@ -1781,10 +1801,10 @@ function viewRun(){
   return `
     <section class="photo-band" style="background-image:url('${PHOTO.run.src}')">
       ${credit(PHOTO.run)}
-      <div style="padding:14px 16px"><p class="label">Ton sport de la semaine, hors muscu</p><h2 style="font-size:28px">≈ ${kfmt(wkKcal)} kcal</h2><p class="small">${wkRuns.length} run${wkRuns.length > 1 ? "s" : ""}${wkActs.filter(a => a.kind === "padel").length ? ` · ${wkActs.filter(a => a.kind === "padel").length} padel` : ""}${wkActs.filter(a => a.kind === "surf").length ? ` · ${wkActs.filter(a => a.kind === "surf").length} surf` : ""}</p></div>
+      <div style="padding:14px 16px"><p class="label">Ton sport de la semaine, hors muscu</p><h2 style="font-size:28px">≈ ${kfmt(wkKcal)} kcal</h2><p class="small">${wkRuns.length} run${wkRuns.length > 1 ? "s" : ""}${wkActs.filter(a => a.kind === "padel").length ? ` · ${wkActs.filter(a => a.kind === "padel").length} padel` : ""}${wkActs.filter(a => a.kind === "surf").length ? ` · ${wkActs.filter(a => a.kind === "surf").length} surf` : ""}${wkActs.filter(a => a.kind === "tapis").length ? ` · ${wkActs.filter(a => a.kind === "tapis").length} tapis` : ""}</p></div>
     </section>
     <section class="panel">
-      <div class="nseg" role="tablist" aria-label="Type de sport">${kinds.map(([k, l]) => `<button type="button" role="tab" data-sport-kind="${k}" aria-selected="${sportKind === k}">${l}</button>`).join("")}</div>
+      <div class="nseg" role="tablist" aria-label="Type de sport" style="grid-template-columns:repeat(4,minmax(0,1fr))">${kinds.map(([k, l]) => `<button type="button" role="tab" data-sport-kind="${k}" aria-selected="${sportKind === k}">${l}</button>`).join("")}</div>
       ${form}
     </section>
     <div class="sec-title"><h2>Derniers sports</h2></div>
@@ -1805,9 +1825,9 @@ function sportSplit(key){
   let muscu = 0, run = 0;
   for (const s of sessions()) if (dayKey(s.date) === key) muscu += sessionKcal(s);
   for (const r of runs()) if (dayKey(r.date) === key) run += runKcalOf(r);
-  let padel = 0, surf = 0;
-  for (const a of acts()) if (dayKey(a.date) === key){ if (a.kind === "padel") padel += actKcal(a); else surf += actKcal(a); }
-  return { muscu, run, padel, surf };
+  let padel = 0, surf = 0, tapis = 0;
+  for (const a of acts()) if (dayKey(a.date) === key){ if (a.kind === "padel") padel += actKcal(a); else if (a.kind === "tapis") tapis += actKcal(a); else surf += actKcal(a); }
+  return { muscu, run, padel, surf, tapis };
 }
 /* Objectif du jour = dépense du jour − 500 kcal : il monte les jours de sport. */
 function dayTarget(key){ const m = modeOn(key); const v = Math.round((baseKcal() + sportOn(key) + calorieOffset(m)) / 50) * 50; return m === "seche" ? Math.max(DAY_FLOOR, v) : v; }
@@ -1872,7 +1892,8 @@ function energyBlock(key, isToday){
     { l:"Muscu", v:sp.muscu, c:"#8fc3ff" },
     { l:"Run", v:sp.run, c:"#c9e2ff" },
     { l:"Padel", v:sp.padel || 0, c:"#7fd9b4" },
-    { l:"Surf", v:sp.surf || 0, c:"#3fbf8f" }
+    { l:"Surf", v:sp.surf || 0, c:"#3fbf8f" },
+    { l:"Tapis", v:sp.tapis || 0, c:"#ffc98a" }
   ];
   const order = ["petitdej","midi","collation","diner","autre"];
   const bySlot = {}; for (const m of r.meals) bySlot[m.slot || "autre"] = (bySlot[m.slot || "autre"] || 0) + (m.kcal || 0);
@@ -2975,7 +2996,7 @@ function applyMode(){
   const h = (profile.modes || []).filter(x => x.since < today);
   if (!h.length) h.push({ mode: cur, since: "2000-01-01" });
   h.push({ mode: pick, since: today });
-  profile.modes = h; profile.mode = pick; profile.modeStart = { w: G.w, bf: G.bf, date: today };
+  profile.modes = h.filter((x, i) => i === 0 || x.mode !== h[i - 1].mode); profile.mode = pick; profile.modeStart = { w: G.w, bf: G.bf, date: today };
   saveProfile(); closeSheet(); render(); window.scrollTo(0, 0);
   toast(`Mode ${MODES[pick].long.toLowerCase()} activé · objectif du jour ${kfmt(dayTarget(today))} kcal`);
 }
@@ -3048,6 +3069,11 @@ main.addEventListener("input", e => {
   const t = e.target;
   if (t.id === "meal-desc"){ nut.desc = t.value; return; }
   if (t.id === "day-date"){ const d = days()[t.value]; $("#day-kcal").value = d && d.kcal != null ? d.kcal : ""; $("#day-prot").value = d && d.prot != null ? d.prot : ""; return; }
+  if ((t.id === "act-min" || t.id === "act-inc" || t.id === "act-speed") && $("#act-est")){
+    const m = num($("#act-min").value), i = num($("#act-inc").value), v = num($("#act-speed").value);
+    $("#act-est").innerHTML = m && v ? `≈ <b>${kfmt(tapisKcal(m, i || 0, v, profile.weight))} kcal</b> pour ${m} min à ${fr(i || 0)} % et ${fr(v)} km/h` : "Indique la durée et la vitesse";
+    return;
+  }
   if (t.id === "note" && draft){ draft.note = t.value; saveDraft(); return; }
   const row = t.closest(".set"); if (!row || !draft) return;
   const s = draft.sets[row.dataset.exo][+row.dataset.i];
@@ -3260,6 +3286,12 @@ main.addEventListener("click", async e => {
     const date = new Date(dateVal + "T" + now.toTimeString().slice(0, 8)).toISOString();
     const a = { id: "a-" + now.getTime().toString(36) + Math.random().toString(36).slice(2, 5), date, kind: sportKind, minutes: Math.round(minutes), note: ($("#act-note").value || "").trim() };
     if (sportKind === "padel") a.format = $("#act-format").value;
+    if (sportKind === "tapis"){
+      const inc = num($("#act-inc").value), sp = num($("#act-speed").value);
+      if (inc == null || inc < 0 || inc > 25){ $("#act-inc").focus(); toast("Indique une pente entre 0 et 25 %"); t.disabled = false; return; }
+      if (sp == null || sp < 2 || sp > 9){ $("#act-speed").focus(); toast("Indique une vitesse de marche entre 2 et 9 km/h"); t.disabled = false; return; }
+      a.incline = inc; a.speed = sp;
+    }
     t.disabled = true;
     const before = dayTarget(dayKey(date));
     const ok = await writeDoc("activities", a);
