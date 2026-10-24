@@ -2258,8 +2258,13 @@ function pickDinners(R){
   const train = R.sport > 0;
   const today = dayKey(new Date()), seen = LS.get("carnet.ideas.seen", {}), eatenTxt = recentMealText(6);
   const ageOf = id => seen[id] ? Math.round((new Date(today + "T12:00:00") - new Date(seen[id] + "T12:00:00")) / 864e5) : 99;
-  let okList = DINNERS.filter(d => !(profile.hidden || []).includes(d.id) && !nut.skip.has(d.id));
-  if (okList.length < 3){ nut.skip.clear(); okList = DINNERS.filter(d => !(profile.hidden || []).includes(d.id)); }
+  /* On écarte les plats qui contiennent un aliment que tu n'aimes pas. */
+  const normD = x => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const badD = normD(profile.dislikes).split(/[,;\n]| et /).map(x => x.trim().replace(/s$/, "")).filter(x => x.length > 2 && !/genre|type|legume/.test(x));
+  const liked = d => !badD.some(b => normD(d.name + " " + d.items.map(x => typeof x === "string" ? x : x.t).join(" ")).includes(b));
+  const base = DINNERS.filter(d => !(profile.hidden || []).includes(d.id) && liked(d));
+  let okList = base.filter(d => !nut.skip.has(d.id));
+  if (okList.length < 3){ nut.skip.clear(); okList = base; }
   const B = Math.max(0, R.kcal);
   const floor = Math.max(R.kcal, 280);
   const pool = okList.map(d => scaleDinner(d, B, R.p, train)).filter(x => !(x.base && x.dropped));
