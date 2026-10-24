@@ -793,7 +793,7 @@ function targets(){
   const typical = (QN() * Math.round(MET_MUSCU_NET * profile.weight * 55 / 60) + Math.round((profile.cardioKm || 0) * profile.weight * 0.9)) / 7;
   const tdee = baseKcal() + typical;
   const m = curMode();
-  return { tdee: Math.round(tdee), kcal: Math.round((tdee + calorieOffset(m)) / 50) * 50, prot: Math.round(profile.weight * (m === "seche" ? 2 : 1.8) / 5) * 5, fat: Math.round(profile.weight * 0.8 / 5) * 5 };
+  return { tdee: Math.round(tdee), kcal: smoothOn() ? dayTarget(dayKey(new Date())) : Math.round((tdee + calorieOffset(m)) / 50) * 50, prot: Math.round(profile.weight * (m === "seche" ? 2 : 1.8) / 5) * 5, fat: Math.round(profile.weight * 0.8 / 5) * 5 };
 }
 const kfmt = n => Math.round(n).toLocaleString("fr-FR");
 const BODYWEIGHT = 78;
@@ -1158,7 +1158,7 @@ function renderHeader(){
   $("#xp-fill").style.width = Math.round(L.pct * 100) + "%";
   const w = A.thisWeek;
   const wsIso = weekStart().toISOString(); const wa = acts().filter(a => a.date >= wsIso).length;
-  $("#week").textContent = `${A.xp} XP · cette semaine : ${w.s} séance${w.s > 1 ? "s" : ""}, ${w.r} run${w.r > 1 ? "s" : ""}${wa ? `, ${wa} padel/surf` : ""}`;
+  $("#week").textContent = `${A.xp} XP · cette semaine : ${w.s} séance${w.s > 1 ? "s" : ""}, ${w.r} run${w.r > 1 ? "s" : ""}${wa ? `, ${wa} activité${wa > 1 ? "s" : ""}` : ""}`;
   const chip = $("#sync");
   const p = pending.sessions.length + pending.runs.length;
   if (mode === "pending"){ chip.className = "sync"; chip.textContent = "Connexion…"; }
@@ -1577,7 +1577,7 @@ function viewRecap(){
       <p class="label">Séance ${esc(s.type)} enregistrée${s._pending ? " · synchronisation…" : ""}</p>
       <span class="big">+${r.gain} XP</span>
       <p class="burn">≈ ${kfmt(r.kcal)} kcal brûlées en ${s.durationMin} min</p>
-      <p class="small">Ton objectif calorique du jour monte à <b>${kfmt(dayTarget(dayKey(new Date())))} kcal</b> : ${kfmt(r.kcal)} kcal de marge en plus pour ce soir.</p>
+      <p class="small">${smoothOn() ? `Ta séance compte dans ta moyenne des 14 derniers jours : ton objectif lissé est de <b>${kfmt(dayTarget(dayKey(new Date())))} kcal</b> par jour.` : `Ton objectif calorique du jour monte à <b>${kfmt(dayTarget(dayKey(new Date())))} kcal</b> : ${kfmt(r.kcal)} kcal de marge en plus pour ce soir.`}</p>
       <ul class="break">${items.map(([k, v]) => `<li><span>${esc(k)}</span><b>+${v}</b></li>`).join("")}</ul>
       ${r.levelUp ? `<div class="levelup">Niveau ${r.after.n} débloqué<b>${esc(r.after.name)}</b></div>` : `<div style="width:100%"><div class="xpbar" style="height:12px;background:var(--ink)"><i style="width:${Math.round(r.after.pct * 100)}%"></i></div><p class="small muted" style="margin-top:6px">${r.after.next ? `Encore ${r.after.next - r.xpAfter} XP pour « ${esc(r.after.nextName)} »` : "Niveau maximum atteint"}</p></div>`}
       ${r.prs.length ? `<p class="small">Records : <b>${r.prs.map(id => esc(ALL_EXOS[id].name)).join(", ")}</b></p>` : ""}
@@ -1830,7 +1830,22 @@ function sportSplit(key){
   return { muscu, run, padel, surf, tapis };
 }
 /* Objectif du jour = dépense du jour − 500 kcal : il monte les jours de sport. */
-function dayTarget(key){ const m = modeOn(key); const v = Math.round((baseKcal() + sportOn(key) + calorieOffset(m)) / 50) * 50; return m === "seche" ? Math.max(DAY_FLOOR, v) : v; }
+/* Objectif lissé : on prend la moyenne du sport des 14 derniers jours (au moins 7 jours de base) au lieu du sport du jour.
+   Même déficit sur la semaine, mais tu manges à peu près pareil tous les jours. */
+/* Le lissage s'applique à partir du jour où il a été activé (smoothSince) : les jours d'avant gardent leur calcul de l'époque. */
+function smoothOn(key){ return profile.smooth !== false && (!key || !profile.smoothSince || key >= profile.smoothSince); }
+function firstDataKey(){
+  const ks = Object.keys(days()).concat(sessions().map(x => dayKey(x.date)), runs().map(x => dayKey(x.date)), acts().map(x => dayKey(x.date))).sort();
+  return ks[0] || dayKey(new Date());
+}
+function avgSport(key){
+  const first = firstDataKey(); const end = new Date(key + "T12:00:00"); let tot = 0, n = 0;
+  for (let i = 0; i < 14; i++){ const d = new Date(end); d.setDate(d.getDate() - i); const k = dayKey(d); if (k < first) break; tot += sportOn(k); n++; }
+  return tot / Math.max(7, n);
+}
+function sportForTarget(key){ return smoothOn(key) ? avgSport(key) : sportOn(key); }
+function dayFloor(key){ return smoothOn(key) ? Math.max(DAY_FLOOR, Math.round(bmr() * 1.1 / 50) * 50) : DAY_FLOOR; }
+function dayTarget(key){ const m = modeOn(key); const v = Math.round((baseKcal() + sportForTarget(key) + calorieOffset(m)) / 50) * 50; return m === "seche" ? Math.max(dayFloor(key), v) : v; }
 const STATUS = {
   ok:   { l:"Objectif tenu", short:"Tenu",   g:"✓", c:"var(--green)" },
   mid:  { get l(){ const m = curMode(); return m === "masse" ? "Trop peu" : m === "entretien" ? "En dessous" : "Léger déficit"; }, short:"Léger",  g:"~", c:"var(--amber)" },
@@ -2054,7 +2069,7 @@ function todayStrip(){
       <span><i>${R.kcal < 0 ? (curMode() === "masse" ? "Au-dessus" : "Dépassé") : curMode() === "masse" ? "À manger" : R.gB || R.gM ? "Pour ce soir" : "Reste"}</i><b style="color:${R.kcal >= 0 ? "var(--green)" : "var(--red)"}">${kfmt(Math.abs(R.kcal))}</b></span>
     </span>
     ${segBar([{ l:"Mangé", v:r.intake || 0, c:"#ffc93c" }, { l:"Prévu", v:R.guess, c:"#ffc93c", ghost:true }], max, [{ v:r.target, cls:"tgt", l:"Objectif du jour" }, { v:r.exp, cls:"exp", l:"Dépense" }])}
-    <span class="ts-foot">Objectif du jour ${kfmt(r.target)} kcal${r.sport ? ` (+${kfmt(r.sport)} grâce au sport)` : ""} · voir la nutrition →</span>
+    <span class="ts-foot">Objectif du jour ${kfmt(r.target)} kcal${smoothOn() ? " · lissé sur tes 14 derniers jours" : r.sport ? ` (+${kfmt(r.sport)} grâce au sport)` : ""} · voir la nutrition →</span>
   </button>`;
 }
 
@@ -2127,9 +2142,72 @@ const DINNERS = [
     { t:"1 c. à café d'huile d'olive, sel, poivre", g:5, k:900, p:0, r:"f", fix:true } ]},
   { id:"skyr-oeufs", name:"Mini-dîner : 2 œufs durs, jambon et skyr", time:"10 min", light:true, items:[
     { t:"œuf dur", pl:"œufs durs", pc:55, g:110, k:140, p:12.5, r:"p" }, { t:"jambon blanc", g:40, k:110, p:20, r:"p" },
-    { t:"tomates cerises", g:150, k:20, p:1, r:"v" }, { t:"skyr nature", g:150, k:60, p:10, r:"f", fix:true } ]}
+    { t:"tomates cerises", g:150, k:20, p:1, r:"v" }, { t:"skyr nature", g:150, k:60, p:10, r:"f", fix:true } ]},
+  { id:"fajitas", base:true, name:"Fajitas de poulet, poivrons et salsa", time:"20 min", items:[
+    { t:"blanc de poulet", g:160, k:110, p:23, r:"p" }, { t:"tortilla de blé complet", pl:"tortillas de blé complet", pc:40, g:80, k:300, p:9, r:"c" },
+    { t:"poivrons et oignon", g:200, k:30, p:1.1, r:"v" }, { t:"2 c. à soupe de yaourt grec 0 %, salsa tomate, épices fajitas", g:80, k:45, p:6, r:"f", fix:true } ]},
+  { id:"poke", name:"Poké bowl saumon, riz, concombre et carotte", time:"15 min", items:[
+    { t:"saumon frais en dés", g:130, k:200, p:20, r:"p" }, { t:"riz à sushi cuit", g:150, k:130, p:2.5, r:"c", raw:3 },
+    { t:"concombre, carotte râpée et mâche", g:150, k:22, p:0.8, r:"v" }, { t:"1 c. à soupe de sauce soja, sésame, citron", g:20, k:200, p:5, r:"f", fix:true } ]},
+  { id:"chili", name:"Chili con carne et riz", time:"30 min", items:[
+    { t:"bœuf haché 5 % MG", g:130, k:125, p:21, r:"p" }, { t:"haricots rouges égouttés (100 g)", g:100, k:110, p:8, r:"f", fix:true },
+    { t:"riz cuit", g:100, k:130, p:2.7, r:"c", raw:3 }, { t:"tomates concassées, poivron et oignon", g:250, k:28, p:1.2, r:"v" } ]},
+  { id:"wok-boeuf", base:true, name:"Wok de bœuf, nouilles et légumes croquants", time:"15 min", items:[
+    { t:"bœuf émincé", g:150, k:130, p:22, r:"p" }, { t:"nouilles chinoises (cru)", g:60, k:360, p:12, r:"c" },
+    { t:"poivrons, carottes et oignon", g:250, k:30, p:1, r:"v" }, { t:"1 c. à soupe de sauce soja, 1 c. à café d'huile, gingembre", g:20, k:250, p:2, r:"f", fix:true } ]},
+  { id:"curry-crevettes", name:"Curry de crevettes coco et riz basmati", time:"20 min", items:[
+    { t:"crevettes décortiquées", g:200, k:90, p:20, r:"p" }, { t:"riz basmati cuit", g:130, k:130, p:2.7, r:"c", raw:3 },
+    { t:"poivron, oignon et tomate", g:200, k:28, p:1, r:"v" }, { t:"100 ml de lait de coco allégé, pâte de curry", g:110, k:80, p:1, r:"f", fix:true } ]},
+  { id:"pizza", base:true, name:"Pizza maison jambon, mozzarella et poivrons", time:"25 min", items:[
+    { t:"pâte à pizza fine", g:110, k:270, p:8, r:"c" }, { t:"jambon blanc", g:70, k:110, p:20, r:"p" }, { t:"mozzarella light", g:80, k:165, p:18, r:"p" },
+    { t:"sauce tomate, poivron, oignon, roquette", g:150, k:30, p:1.2, r:"v" } ]},
+  { id:"kebab", base:true, name:"Kebab maison : pita, poulet mariné et sauce blanche", time:"20 min", items:[
+    { t:"blanc de poulet mariné (paprika, cumin, ail)", g:170, k:110, p:23, r:"p" }, { t:"pain pita", pl:"pains pita", pc:70, g:70, k:260, p:9, r:"c" },
+    { t:"tomate, oignon, salade", g:120, k:18, p:1, r:"v" }, { t:"sauce blanche maison : yaourt grec 0 %, ail, citron, menthe", g:60, k:60, p:8, r:"f", fix:true } ]},
+  { id:"bolo", base:true, name:"Spaghetti bolognaise maison", time:"25 min", items:[
+    { t:"spaghetti (cru)", g:70, k:355, p:13, r:"c" }, { t:"bœuf haché 5 % MG", g:130, k:125, p:21, r:"p" },
+    { t:"sauce tomate, carotte et oignon", g:220, k:35, p:1.3, r:"v" }, { t:"parmesan (8 g)", g:8, k:400, p:33, r:"f", fix:true } ]},
+  { id:"salade-pates", base:true, name:"Salade de pâtes au thon, tomates et concombre", time:"15 min", items:[
+    { t:"pâtes (cru)", g:65, k:355, p:13, r:"c" }, { t:"thon au naturel égoutté", g:130, k:115, p:26, r:"p" },
+    { t:"tomates, concombre, poivron", g:200, k:20, p:0.9, r:"v" }, { t:"1 c. à soupe de vinaigrette légère, basilic", g:15, k:300, p:0, r:"f", fix:true } ]},
+  { id:"croque", base:true, name:"Croque-monsieur au pain complet et salade", time:"15 min", items:[
+    { t:"tranche de pain de mie complet", pl:"tranches de pain de mie complet", pc:35, g:140, k:250, p:9, r:"c" }, { t:"jambon blanc", g:80, k:110, p:20, r:"p" },
+    { t:"emmental râpé (25 g)", g:25, k:380, p:28, r:"f", fix:true }, { t:"mâche et tomates", g:120, k:18, p:1, r:"v" } ]},
+  { id:"teriyaki", name:"Saumon teriyaki, riz et carottes sautées", time:"20 min", items:[
+    { t:"pavé de saumon", g:140, k:200, p:20, r:"p" }, { t:"riz cuit", g:130, k:130, p:2.7, r:"c", raw:3 },
+    { t:"carottes et courgette sautées", g:200, k:28, p:1, r:"v" }, { t:"1 c. à soupe de sauce teriyaki", g:18, k:90, p:3, r:"f", fix:true } ]},
+  { id:"poulet-roti", name:"Poulet rôti, pommes de terre au four et salade", time:"35 min", items:[
+    { t:"haut de cuisse de poulet sans peau", g:180, k:150, p:20, r:"p" }, { t:"pommes de terre en quartiers", g:220, k:80, p:2, r:"c" },
+    { t:"roquette et tomates", g:120, k:18, p:1, r:"v" }, { t:"1 c. à café d'huile d'olive, herbes", g:5, k:900, p:0, r:"f", fix:true } ]},
+  { id:"shakshuka", name:"Shakshuka : œufs pochés, sauce tomate-poivron et pain complet", time:"20 min", items:[
+    { t:"œuf", pl:"œufs", pc:55, g:165, k:140, p:12.5, r:"p" }, { t:"blancs d'œuf", g:100, k:50, p:11, r:"p" },
+    { t:"tomates concassées, poivron et oignon", g:300, k:28, p:1.2, r:"v" }, { t:"pain complet", g:60, k:250, p:9, r:"c" }, { t:"feta (25 g)", g:25, k:270, p:15, r:"f", fix:true } ]},
+  { id:"steak-pdt", name:"Rumsteck, pommes de terre sautées et salade", time:"20 min", items:[
+    { t:"rumsteck", g:170, k:130, p:23, r:"p" }, { t:"pommes de terre", g:220, k:80, p:2, r:"c" },
+    { t:"mâche et tomates", g:120, k:18, p:1, r:"v" }, { t:"1 c. à café d'huile d'olive", g:5, k:900, p:0, r:"f", fix:true } ]},
+  { id:"quesadillas", base:true, name:"Quesadillas poulet, poivron et fromage", time:"15 min", items:[
+    { t:"tortilla de blé complet", pl:"tortillas de blé complet", pc:40, g:80, k:300, p:9, r:"c" }, { t:"blanc de poulet", g:140, k:110, p:23, r:"p" },
+    { t:"emmental râpé (25 g)", g:25, k:380, p:28, r:"f", fix:true }, { t:"poivron, oignon et tomate", g:150, k:28, p:1, r:"v" } ]},
+  { id:"couscous", name:"Couscous express poulet, carottes et courgettes", time:"25 min", items:[
+    { t:"blanc de poulet", g:160, k:110, p:23, r:"p" }, { t:"semoule cuite", g:150, k:112, p:3.8, r:"c", raw:2.5 },
+    { t:"carottes, courgette, oignon", g:250, k:28, p:1, r:"v" }, { t:"60 g de pois chiches, ras el hanout", g:60, k:120, p:7, r:"f", fix:true } ]},
+  { id:"parmentier", name:"Hachis parmentier léger", time:"35 min", items:[
+    { t:"bœuf haché 5 % MG", g:140, k:125, p:21, r:"p" }, { t:"purée de pommes de terre au lait demi-écrémé", g:200, k:85, p:2.2, r:"c" },
+    { t:"carottes et oignon", g:120, k:32, p:1, r:"v" }, { t:"emmental râpé (15 g)", g:15, k:380, p:28, r:"f", fix:true } ]},
+  { id:"basquaise", name:"Poulet basquaise et riz", time:"30 min", items:[
+    { t:"blanc de poulet", g:170, k:110, p:23, r:"p" }, { t:"riz cuit", g:130, k:130, p:2.7, r:"c", raw:3 },
+    { t:"poivrons, tomates et oignon", g:250, k:28, p:1.1, r:"v" }, { t:"1 c. à café d'huile d'olive, piment d'Espelette", g:5, k:900, p:0, r:"f", fix:true } ]},
+  { id:"tortilla-esp", name:"Tortilla espagnole et salade de tomates", time:"25 min", items:[
+    { t:"œuf", pl:"œufs", pc:55, g:165, k:140, p:12.5, r:"p" }, { t:"blancs d'œuf", g:120, k:50, p:11, r:"p" },
+    { t:"pommes de terre", g:180, k:80, p:2, r:"c" }, { t:"oignon, tomates et roquette", g:180, k:22, p:1, r:"v" }, { t:"1 c. à café d'huile d'olive", g:5, k:900, p:0, r:"f", fix:true } ]},
+  { id:"cesar", name:"Salade César maison, sauce yaourt", time:"15 min", items:[
+    { t:"blanc de poulet grillé", g:160, k:110, p:23, r:"p" }, { t:"croûtons", g:25, k:400, p:11, r:"c" },
+    { t:"roquette, mâche, tomates", g:180, k:20, p:1, r:"v" }, { t:"sauce yaourt grec, citron, moutarde et 10 g de parmesan", g:70, k:95, p:10, r:"f", fix:true } ]},
+  { id:"burger-potatoes", base:true, name:"Burger maison et potatoes au four", time:"25 min", items:[
+    { t:"steak haché 5 % MG", g:125, k:125, p:21, r:"p" }, { t:"pain burger", pl:"pains burger", pc:60, g:60, k:270, p:9, r:"c" },
+    { t:"pommes de terre en potatoes", g:150, k:80, p:2, r:"c" }, { t:"cheddar, tomate, oignon, roquette, ketchup", g:60, k:150, p:8, r:"f", fix:true } ]}
 ];
-let nut = { day: null, slot: null, desc: "", file: null, fileUrl: null, busy: false, ctl: null, err: "", preview: null, ideaBusy: false, ideaCtl: null, ideaErr: "", idea: null, seen: [], lastIdeas: [], quick: null, view: "jour", adding: null, planned: false };
+let nut = { skip: new Set(), ideaSlot: "diner", day: null, slot: null, desc: "", file: null, fileUrl: null, busy: false, ctl: null, err: "", preview: null, ideaBusy: false, ideaCtl: null, ideaErr: "", idea: null, seen: [], lastIdeas: [], quick: null, view: "jour", adding: null, planned: false };
 let sampleFn = null, canImages = false;
 function defaultSlot(){ const h = new Date().getHours() + new Date().getMinutes() / 60; return h < 10.5 ? "petitdej" : h < 15 ? "midi" : h < 18.5 ? "collation" : "diner"; }
 function remainingToday(excludeSlot){
@@ -2171,15 +2249,22 @@ function scaleDinner(d, B, pNeed, train){
   const t = tot(items);
   return { id: d.id, name: d.name, time: d.time, light: !!d.light, base: !!d.base, items, kcal: Math.round(t.k / 5) * 5, prot: Math.round(t.p), carbs: items.some(x => x.r === "c"), dropped: C.k > 0 && fc === 0, boosted: fc > 1.1 };
 }
+function hashStr(x){ let h = 0; for (const c of String(x)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; }
+function recentMealText(n){
+  const out = []; for (let i = 0; i < n; i++){ const d = new Date(); d.setDate(d.getDate() - i); for (const m of mealsOf(days()[dayKey(d)])) out.push(String(m.label || "").toLowerCase()); }
+  return out.join(" | ");
+}
 function pickDinners(R){
   const train = R.sport > 0;
-  const norm = x => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const bad = norm(profile.dislikes).split(/[,;\n]| et /).map(x => x.trim().replace(/s$/, "")).filter(x => x.length > 2);
-  const okList = DINNERS.filter(d => !(profile.hidden || []).includes(d.id) && !bad.some(b => norm(d.name + " " + d.items.join(" ")).includes(b)));
+  const today = dayKey(new Date()), seen = LS.get("carnet.ideas.seen", {}), eatenTxt = recentMealText(6);
+  const ageOf = id => seen[id] ? Math.round((new Date(today + "T12:00:00") - new Date(seen[id] + "T12:00:00")) / 864e5) : 99;
+  let okList = DINNERS.filter(d => !(profile.hidden || []).includes(d.id) && !nut.skip.has(d.id));
+  if (okList.length < 3){ nut.skip.clear(); okList = DINNERS.filter(d => !(profile.hidden || []).includes(d.id)); }
   const B = Math.max(0, R.kcal);
   const floor = Math.max(R.kcal, 280);
   const pool = okList.map(d => scaleDinner(d, B, R.p, train)).filter(x => !(x.base && x.dropped));
-  const score = x => Math.max(0, x.kcal - floor) * 3 + Math.max(0, R.kcal - x.kcal) * 0.5 + Math.max(0, R.p - x.prot) * 8 - (train && x.carbs && R.kcal > 450 ? 80 : 0) + (x.light && R.kcal > 500 ? 300 : 0);
+  const variety = x => { const a = ageOf(x.id); return (a >= 1 && a <= 2 ? 260 : a === 3 ? 120 : 0) + (eatenTxt.includes(x.name.toLowerCase().slice(0, 14)) ? 400 : 0) + hashStr(x.id + today + (R.slot || "")) % 180; };
+  const score = x => Math.max(0, x.kcal - floor) * 3 + Math.max(0, R.kcal - x.kcal) * 0.5 + Math.max(0, R.p - x.prot) * 8 - (train && x.carbs && R.kcal > 450 ? 80 : 0) + (x.light && R.kcal > 500 ? 300 : 0) + variety(x);
   pool.sort((a, b) => score(a) - score(b));
   return pool.slice(0, 3);
 }
@@ -2223,15 +2308,16 @@ Réponds uniquement avec ce JSON :
 }
 async function askDinnerIdea(){
   if (!sampleFn || nut.ideaBusy) return;
-  const R = remainingToday();
+  const lunch = nut.ideaSlot === "midi";
+  const R = lunch ? lunchBudget() : remainingToday("diner");
   nut.ideaBusy = true; nut.ideaErr = ""; nut.ideaCtl = new AbortController(); render();
   const eaten = R.meals.length ? R.meals.map(m => `${SLOT_LABEL[m.slot] || "Repas"} : ${m.label} (${m.kcal} kcal, ${m.prot} g prot.)`).join(" ; ") : "rien de noté";
-  const avoid = DINNERS.map(d => d.name).concat(nut.seen).join(" ; ");
+  const avoid = (nut.lastIdeas || []).map(d => d.name).concat(nut.seen).join(" ; ");
   const prompt = `Tu es coach en nutrition pour une sèche, dans l'esprit de Nassim Sahili : protéines élevées, aliments simples et peu transformés, quantités précises.
-Propose UN dîner pour ce soir.
+Propose UN ${lunch ? "déjeuner pour ce midi (il est à la maison)" : "dîner pour ce soir"}. Varie les cuisines (française, italienne, mexicaine, asiatique, orientale…) et propose un plat qui donne envie, pas un plat de régime triste.
 Profil : homme, ${fr(profile.weight)} kg, environ ${fr(profile.bf)} % de masse grasse, en sèche.
-Objectif du jour : ${R.T.kcal} kcal et ${R.T.prot} g de protéines. Déjà mangé : ${eaten}.${R.guess ? ` Pas encore noté mais à compter : ${R.guessText.replace('Pas encore noté, je compte ', '')}` : ""}
-Il reste environ ${Math.max(250, R.kcal)} kcal et ${R.p} g de protéines pour le dîner. ${R.sport ? `Il s'est entraîné aujourd'hui (${R.sport} kcal dépensées) : garde une portion de féculents.` : "Pas de sport aujourd'hui."}
+Objectif du jour : ${R.target || R.T.kcal} kcal et ${R.T.prot} g de protéines. Déjà mangé : ${eaten}.${R.guess ? ` Pas encore noté mais à compter : ${R.guessText.replace('Pas encore noté, je compte ', '')}` : ""}
+${lunch ? `Vise environ ${R.kcal} kcal et ${R.p} g de protéines pour ce midi, en gardant de quoi faire un vrai dîner.` : `Il reste environ ${Math.max(250, R.kcal)} kcal et ${R.p} g de protéines pour le dîner.`} ${R.sport ? `Il s'est entraîné aujourd'hui (${R.sport} kcal dépensées) : garde une portion de féculents.` : "Pas de sport aujourd'hui."}
 Contraintes : 30 minutes maximum, ingrédients de supermarché français, quantités en grammes. N'utilise jamais : ${profile.dislikes}. Légumes et salades qu'il aime : ${profile.likes}. Pas de whey. Évite ces plats déjà proposés : ${avoid}.
 Réponds uniquement avec ce JSON :
 {"name":"nom du plat","time":"20 min","kcal":0,"prot":0,"items":["150 g de ..."],"steps":["étape courte"],"why":"une phrase sur pourquoi ce plat convient ce soir"}`;
@@ -2274,6 +2360,18 @@ function dinnerCard(d, fromClaude, R){
     <ul class="ingr">${items.map(x => `<li>${esc(x)}</li>`).join("")}</ul>
     <div class="dinner-actions"><span></span><button type="button" class="ghost" data-hide="${esc(d.id)}">Pas pour moi</button></div>
   </article>`;
+  if (R.slot === "midi"){
+    const left = R.rem - d.kcal;
+    return `<article class="dinner${fromClaude ? " claude" : ""}">
+    <div class="dinner-head"><h3>${esc(d.name)}</h3><span class="pill xp">${kfmt(d.kcal)} kcal</span></div>
+    <p class="small muted">${d.prot} g de protéines${d.time ? ` · ${esc(d.time)}` : ""}</p>
+    ${d.why ? `<p class="small">${esc(d.why)}</p>` : ""}
+    <ul class="ingr">${items.map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+    ${d.steps && d.steps.length ? `<ol class="mini-steps">${d.steps.map(x => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}
+    <div class="proj compact"><div class="proj-foot"><span class="small">Il te restera environ <b>${kfmt(Math.max(0, left))} kcal</b> pour ce soir</span></div></div>
+    <div class="dinner-actions"><button type="button" class="btn" data-eat="${esc(d.id)}">Je prévois ça</button><button type="button" class="ghost" data-hide="${esc(d.id)}">Pas pour moi</button></div>
+  </article>`;
+  }
   const eatenAll = R.eaten + R.guess, total = eatenAll + d.kcal;
   const st = statusOf(total, R.target, R.exp);
   const max = Math.max(total, R.exp, R.target) * 1.04;
@@ -2433,6 +2531,7 @@ function slotRow(slot, r, isToday){
   let extra = "";
   if (slot === "petitdej" && !items.length && profile.breakfast) extra += `<button type="button" class="habit" id="bk-add"><span><b>Mon petit-déj habituel</b><i>${esc(profile.breakfast.label.replace(/^Petit-déj habituel : /, ""))}</i></span><span class="pill xp">${profile.breakfast.kcal} kcal</span></button>`;
   if (slot === "collation" && isToday && !open) extra += snackBlock();
+  if (slot === "midi" && isToday && !items.length && !open && new Date().getHours() < 15) extra += `<div class="dinner-actions"><button type="button" class="btn" data-nview="idees">Voir des idées</button><span></span></div>`;
   if (slot === "diner" && isToday && !items.length && !open){ const Rd = remainingToday("diner"); extra += `<p class="small muted">Pour ce soir : environ <b class="fg">${kfmt(Math.max(0, Rd.kcal))} kcal</b> et <b class="fg">${Rd.p} g de protéines</b>.</p>`; }
   if (slot === "diner" && isToday && !items.length && !open) extra += `<div class="dinner-actions"><button type="button" class="btn" data-nview="idees">Voir des idées</button><button type="button" class="ghost" data-add-slot="diner" data-plan="1">Je prévois mon dîner</button></div>`;
   return `<div class="tl-slot${items.length ? " has" : ""}" style="--sc:${S.c}">
@@ -2466,15 +2565,52 @@ function viewNutJour(){
     </section>
     <section class="panel">${quickSport(nut.day, sportSplit(nut.day))}</section>`;
 }
+/* Budget du midi : on garde environ la moitié de ce qui reste pour le soir. */
+function markSeen(ideas){
+  const today = dayKey(new Date()); const seen = LS.get("carnet.ideas.seen", {}); let ch = false;
+  for (const d of ideas) if (seen[d.id] !== today){ seen[d.id] = today; ch = true; }
+  if (ch) LS.set("carnet.ideas.seen", seen);
+}
+function lunchBudget(){
+  const T = targets(), key = dayKey(new Date()), r = dayRow(key);
+  const hasBk = r.all.some(m => m.slot === "petitdej");
+  const gB = hasBk || !profile.breakfast ? 0 : profile.breakfast.kcal, gBp = hasBk || !profile.breakfast ? 0 : profile.breakfast.prot;
+  const otherPlans = r.plans.filter(m => m.slot !== "midi"), pK = otherPlans.reduce((a, m) => a + (m.kcal || 0), 0), pP = otherPlans.reduce((a, m) => a + (m.prot || 0), 0);
+  const rem = r.target - (r.intake || 0) - gB - pK;
+  const share = otherPlans.some(m => m.slot === "diner") ? 1 : 0.5;
+  const kcal = Math.max(400, Math.min(950, Math.round(rem * share / 10) * 10));
+  const pRem = Math.max(0, T.prot - (r.prot || 0) - gBp - pP);
+  return { slot: "midi", T, target: r.target, exp: r.exp, eaten: r.intake || 0, guess: gB + pK, kcal, p: Math.round(pRem * (share === 1 ? 1 : 0.5)), rem, sport: r.sport, meals: r.meals, guessText: gB ? `Ton petit-déj habituel (${profile.breakfast.kcal} kcal) est compté. ` : "" };
+}
 function viewNutIdees(){
   const T = targets();
+  const r0 = dayRow(dayKey(new Date()));
+  const lunchTime = new Date().getHours() < 15 && !r0.meals.some(m => m.slot === "midi");
+  nut.ideaSlot = lunchTime ? "midi" : "diner";
+  if (lunchTime){
+    const R = lunchBudget();
+    const ideas = pickDinners(R); nut.lastIdeas = ideas; markSeen(ideas);
+    return `<section class="panel">
+      <div class="sec-title"><h2>Ce midi, je mange quoi ?</h2></div>
+      <div class="budget">
+        <div><span class="v">${kfmt(R.kcal)}</span><span class="k">kcal pour ton midi</span></div>
+        <div><span class="v">${R.p}</span><span class="k">g de protéines à viser</span></div>
+      </div>
+      <p class="small muted">${R.guessText}Il te restera environ ${kfmt(Math.max(0, R.rem - R.kcal))} kcal pour un vrai dîner ce soir.</p>
+      ${nut.idea ? dinnerCard(nut.idea, true, R) : ""}
+      ${ideas.map(d => dinnerCard(d, false, R)).join("")}
+      <button type="button" class="ghost" data-more-ideas>D'autres idées</button>
+      ${sampleFn ? `<button type="button" class="btn" id="idea-ask"${nut.ideaBusy ? " disabled" : ""}>${nut.ideaBusy ? "Claude cherche une idée…" : "Une idée sur mesure avec Claude"}</button>${nut.ideaBusy ? `<button type="button" class="ghost" id="idea-stop">Arrêter</button>` : ""}` : ""}
+      ${nut.ideaErr ? `<p class="msg">${esc(nut.ideaErr)}</p>` : ""}
+    </section>`;
+  }
   if (dayRow(dayKey(new Date())).meals.some(m => m.slot === "diner")){
     const ideas = pickDinners({ kcal: 450, p: 45, sport: 0 });
     return `<section class="panel planned-box"><p class="label">Ton dîner d'aujourd'hui est noté</p><p class="small muted">Voici des idées pour un prochain soir, calibrées pour un dîner d'environ 450 kcal. Demain, elles s'ajusteront à ce que tu auras mangé.</p></section>
     <section class="panel">${ideas.map(d => dinnerCard(d, false, null)).join("")}</section>`;
   }
   const R = remainingToday("diner");
-  const ideas = pickDinners(R); nut.lastIdeas = ideas;
+  const ideas = pickDinners(R); nut.lastIdeas = ideas; markSeen(ideas);
   const planned = dayRow(dayKey(new Date())).plans.filter(m => m.slot === "diner");
   return `${planned.length ? `<section class="panel planned-box"><p class="label">Dîner prévu ce soir</p>${planned.map(m => `<p><b>${esc(m.label)}</b> · ${kfmt(m.kcal)} kcal · ${m.prot} g prot.</p>`).join("")}<p class="small muted">Choisis une idée ci-dessous pour le remplacer.</p></section>` : ""}
     <section class="panel">
@@ -2488,6 +2624,7 @@ function viewNutIdees(){
       ${nut.idea ? dinnerCard(nut.idea, true, R) : ""}
       ${ideas.map(d => dinnerCard(d, false, R)).join("")}
       ${R.kcal - (ideas[0] ? ideas[0].kcal : 0) > 200 ? `<p class="small">Il te restera de la marge : ajoute un dessert protéiné, par exemple 150 g de fromage blanc 0 % et des fruits rouges (environ 120 kcal et 12 g de protéines).</p>` : ""}
+      <button type="button" class="ghost" data-more-ideas>D'autres idées</button>
       ${sampleFn ? `<button type="button" class="btn" id="idea-ask"${nut.ideaBusy ? " disabled" : ""}>${nut.ideaBusy ? "Claude cherche une idée…" : "Une autre idée sur mesure avec Claude"}</button>${nut.ideaBusy ? `<button type="button" class="ghost" id="idea-stop">Arrêter</button>` : ""}` : ""}
       ${nut.ideaErr ? `<p class="msg">${esc(nut.ideaErr)}</p>` : ""}
     </section>`;
@@ -2561,11 +2698,12 @@ function viewNutBilan(){
 
     <section class="panel">
       <details class="calc"><summary>Comment c'est calculé</summary>
-        <p class="small">Ton métabolisme de base est calculé à partir de ta masse maigre (formule de Katch-McArdle) : ${kfmt(bmr())} kcal. On le multiplie par ton niveau d'activité hors sport. Une séance de muscu compte environ ${kfmt(MET_MUSCU_NET * profile.weight)} kcal par heure au-delà du repos, et un run environ ${fr(Math.round(profile.weight * 0.9))} kcal par km. L'objectif du jour, c'est ta dépense du jour ${{ seche: `moins ${DEFICIT} kcal`, masse: `plus ${SURPLUS} kcal`, entretien: "sans déficit ni surplus" }[curMode()]} : il monte automatiquement les jours de séance ou de run, et les idées de dîner s'ajustent à ce qu'il te reste.</p>
+        <p class="small">Ton métabolisme de base est calculé à partir de ta masse maigre (formule de Katch-McArdle) : ${kfmt(bmr())} kcal. On le multiplie par ton niveau d'activité hors sport. Une séance de muscu compte environ ${kfmt(MET_MUSCU_NET * profile.weight)} kcal par heure au-delà du repos, et un run environ ${fr(Math.round(profile.weight * 0.9))} kcal par km. ${smoothOn() ? `Ton objectif est lissé : c'est ta dépense moyenne des 14 derniers jours, sport compris, ${{ seche: `moins ${DEFICIT} kcal`, masse: `plus ${SURPLUS} kcal`, entretien: "sans déficit ni surplus" }[curMode()]}. Tu manges à peu près pareil tous les jours, et le déficit de la semaine reste le même. Chaque séance fait monter un peu ta moyenne` : `L'objectif du jour, c'est ta dépense du jour ${{ seche: `moins ${DEFICIT} kcal`, masse: `plus ${SURPLUS} kcal`, entretien: "sans déficit ni surplus" }[curMode()]} : il monte automatiquement les jours de séance ou de run`}, et les idées de dîner s'ajustent à ce qu'il te reste.</p>
         <p class="small muted">Ce sont des estimations, avec une marge d'erreur de 10 à 15 %, et les estimations de repas aussi. Le vrai juge, c'est la tendance de ton poids sur 2 à 3 semaines : si elle ne baisse pas, retire 100 à 150 kcal à ton objectif.</p>
       </details>
       <details class="calc"><summary>Mes paramètres</summary>
       <p class="small">Mode actuel : <b style="color:var(--mode)">${MODES[curMode()].long}</b>. <button type="button" class="link-btn" data-mode-open>Changer de mode</button></p>
+      <p class="small">Objectif : <b>${smoothOn() ? "lissé sur 14 jours" : "recalculé chaque jour selon ton sport"}</b>. <button type="button" class="link-btn" data-smooth-toggle>${smoothOn() ? "Passer à l'objectif du jour" : "Lisser sur 14 jours"}</button></p>
       <div class="field-row">
         <div class="field"><label class="label" for="prof-w">Poids (kg)</label><input id="prof-w" inputmode="decimal" value="${fr(profile.weight)}"></div>
         <div class="field"><label class="label" for="prof-bf">Masse grasse (%)</label><input id="prof-bf" inputmode="decimal" value="${fr(profile.bf)}"></div>
@@ -3157,6 +3295,8 @@ main.addEventListener("click", async e => {
   if (t.id === "finish-anyway"){ finishSession(true); return; }
   if (t.id === "finish-back"){ const m = $("#finish-msg"); m.hidden = true; m.className = "msg"; const first = [...main.querySelectorAll(".exo:not(.mini)")][0]; if (first) first.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" }); return; }
   if (t.dataset.modeOpen !== undefined){ openModeSheet(); return; }
+  if (t.dataset.smoothToggle !== undefined){ profile.smooth = !smoothOn(); if (profile.smooth) profile.smoothSince = dayKey(new Date()); saveProfile(); render(); toast(smoothOn() ? `Objectif lissé : ${kfmt(dayTarget(dayKey(new Date())))} kcal par jour` : "Objectif recalculé chaque jour selon ton sport"); return; }
+  if (t.dataset.moreIdeas !== undefined){ for (const d of nut.lastIdeas || []) nut.skip.add(d.id); render(); const top = document.querySelector(".dinner"); if (top) top.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" }); return; }
   if (t.dataset.histAll !== undefined){ histAll = !histAll; render(); return; }
   if (t.dataset.expand){ openDone.add(t.dataset.expand); render(); return; }
   if (t.dataset.closeDay){
@@ -3226,10 +3366,11 @@ main.addEventListener("click", async e => {
   if (t.dataset.eat){
     const d = (nut.idea && nut.idea.id === t.dataset.eat) ? nut.idea : (nut.lastIdeas || []).find(x => x.id === t.dataset.eat); if (!d) return;
     const tk = dayKey(new Date());
-    const keep = mealsOf(days()[tk]).filter(m => !(m.planned && m.slot === "diner"));
+    const sl = nut.ideaSlot || "diner";
+    const keep = mealsOf(days()[tk]).filter(m => !(m.planned && m.slot === sl));
     await saveDayMeals(tk, keep);
     nut.view = "jour"; nut.day = tk;
-    await addMeal({ slot: "diner", label: d.name + (d.dropped ? " (sans féculents)" : ""), kcal: d.kcal, prot: d.prot, src: "idee", planned: true }, tk);
+    await addMeal({ slot: sl, label: d.name + (d.dropped ? " (sans féculents)" : ""), kcal: d.kcal, prot: d.prot, src: "idee", planned: true }, tk);
     window.scrollTo(0, 0); return;
   }
   if (t.id === "idea-ask"){ askDinnerIdea(); return; }
@@ -3602,7 +3743,7 @@ render();
     if (!snap.exists) return;
     const d = snap.data();
     if (d.weight && d.bf && d.activity){
-      for (const k of ["weight","bf","activity","startWeight","startBf","goalBf","dislikes","likes","hidden","breakfast","mode","modes","massTargetW","massCapBf","stableW","modeStart"]) if (d[k] !== undefined && d[k] !== null) profile[k] = d[k];
+      for (const k of ["weight","bf","activity","startWeight","startBf","goalBf","dislikes","likes","hidden","breakfast","mode","modes","massTargetW","massCapBf","stableW","modeStart","smooth","smoothSince"]) if (d[k] !== undefined && d[k] !== null) profile[k] = d[k];
       LS.set("carnet.cache.profile", profile); if (!(draft && tab === "seance")) render();
     }
   }, () => {});
