@@ -1499,7 +1499,7 @@ function viewExo(exo, n, orig){
       <div class="exo-title">
         <span class="num">${n}</span>
         <div>
-          <h3>${esc(exo.name)}${INFO[exo.id] ? `<button type="button" class="info-btn" data-info="${exo.id}" aria-label="Comment bien faire : ${esc(exo.name)}">i</button>` : ""}<button type="button" class="swap-btn" data-swap="${orig.id}" aria-label="Remplacer cet exercice" aria-expanded="${swap.open === orig.id}">⇄</button></h3>
+          <h3>${esc(exo.name)}${infoFor(exo.id) ? `<button type="button" class="info-btn" data-info="${exo.id}" aria-label="Comment bien faire : ${esc(exo.name)}">i</button>` : ""}<button type="button" class="swap-btn" data-swap="${orig.id}" aria-label="Remplacer cet exercice" aria-expanded="${swap.open === orig.id}">⇄</button></h3>
           <p class="presc"><b>${exo.sets} × ${exo.min}–${exo.max}</b> · repos ${fmtRest(exo.rest)}${exo.drop ? " · dernière en dégressif" : ""}</p>
           ${swapped ? `<p class="alt-note">Remplace ${esc(orig.name.toLowerCase())}. ${esc(exo.cue || "")}</p>` : ""}
         </div>
@@ -2935,6 +2935,77 @@ const INFO = {
     errors:["Rebondir en bas.","Plier les genoux.","Réduire l'amplitude."],
     tip:"Les mollets aiment l'amplitude complète et les pauses en haut et en bas." }
 };
+/* Fiches des exercices de remplacement : muscles, exécution, erreurs, conseil, et l'animation la plus proche (d). */
+const INFO_ALT = {
+  "tirage-large":{ d:"tirage", m:["Grand dorsal","Grand rond","Biceps"], s:["Cale les cuisses sous les boudins, prise large en pronation.","Poitrine sortie, buste à peine penché en arrière.","Tire la barre vers le haut des pecs en descendant les coudes.","Remonte lentement jusqu'à l'étirement complet."], e:["Tirer derrière la nuque.","Se balancer pour s'aider.","Tirer avec les bras au lieu des coudes."], t:"Plus la prise est large, plus tu travailles la largeur du dos. Ne va pas au-delà d'une fois et demie la largeur d'épaules." },
+  "tractions-assist":{ d:"tractions", m:["Grand dorsal","Biceps","Bas des trapèzes"], s:["Règle le poids d'aide : plus il est lourd, plus c'est facile.","Genoux sur le coussin, prise un peu plus large que les épaules.","Tire la poitrine vers la barre en abaissant les épaules.","Redescends en 2 secondes jusqu'aux bras tendus."], e:["Mettre trop d'aide : tu dois finir proche de l'échec.","Couper l'amplitude en bas."], t:"Diminue l'aide de 5 kg dès que tu fais le haut de la fourchette partout : c'est ta progression." },
+  "tirage-unilat":{ d:"tirage", m:["Grand dorsal","Grand rond"], s:["Assis ou à un genou, poignée dans une main.","Laisse le bras s'étirer complètement en haut.","Tire le coude vers la hanche, buste fixe.","Contrôle la remontée, puis change de côté."], e:["Tourner le buste pour tricher.","Tirer avec le biceps."], t:"Travaille ton côté le plus faible en premier, et fais le même nombre de reps de l'autre côté." },
+  "tractions-neutre":{ d:"tractions", m:["Grand dorsal","Biceps","Brachial"], s:["Poignées parallèles, paumes face à face.","Abaisse les épaules avant de tirer.","Monte jusqu'à passer le menton au-dessus des poignées.","Redescends en contrôlant jusqu'aux bras tendus."], e:["Se balancer.","Remonter avant d'avoir tendu les bras."], t:"La prise neutre ménage les épaules et les coudes : idéale si la prise large te gêne." },
+  "pullover-poulie":{ d:"x-pullover", m:["Grand dorsal","Grand rond","Long chef du triceps"], s:["Corde ou barre à la poulie haute, recule d'un pas, buste légèrement penché.","Bras presque tendus, mains au niveau des yeux.","Ramène les mains vers les cuisses en gardant les bras fixes.","Remonte lentement jusqu'à sentir l'étirement du dos."], e:["Plier les coudes : ça devient une extension triceps.","Charger trop lourd et bouger le buste."], t:"Pense « coudes vers les poches » : c'est le dos qui tire, pas les bras." },
+  "rowing-haltere":{ d:"x-row1", m:["Grand dorsal","Milieu du dos","Arrière d'épaule"], s:["Main et genou du même côté sur le banc, dos plat.","Haltère bras tendu sous l'épaule.","Tire le coude vers la hanche, le long du corps.","Redescends lentement jusqu'à l'étirement."], e:["Tourner le buste pour monter la charge.","Arrondir le dos.","Tirer vers l'épaule au lieu de la hanche."], t:"Garde le regard vers le sol, à un mètre devant toi : ta nuque reste neutre." },
+  "tirage-horizontal":{ d:"rowing", m:["Milieu du dos","Grand dorsal","Biceps"], s:["Assis, pieds calés, genoux légèrement fléchis.","Buste droit, bras tendus devant.","Tire la poignée vers le nombril en serrant les omoplates.","Reviens en laissant les omoplates s'écarter, sans arrondir le dos."], e:["Se pencher en arrière à chaque rep.","Hausser les épaules."], t:"Marque une seconde de pause, omoplates serrées, à chaque rep." },
+  "rowing-barre":{ d:"x-row1", m:["Milieu du dos","Grand dorsal","Lombaires"], s:["Pieds largeur de hanches, genoux fléchis, buste à 45°.","Dos plat, barre bras tendus.","Tire la barre vers le bas du ventre.","Redescends en contrôlant, sans bouger le buste."], e:["Arrondir le bas du dos.","Se redresser pour monter la barre."], t:"Si le bas du dos fatigue avant le dos, passe au rowing haltère ou à la machine." },
+  "oiseau-haltere":{ d:"x-reardelt", m:["Arrière d'épaule","Trapèzes moyens"], s:["Assis au bout du banc ou debout, buste penché presque à l'horizontale.","Haltères sous la poitrine, coudes légèrement fléchis.","Ouvre les bras sur les côtés jusqu'à hauteur d'épaules.","Redescends lentement."], e:["Prendre de l'élan avec le buste.","Charger lourd : c'est un petit muscle."], t:"Imagine que tu verses de l'eau avec tes petits doigts en haut du mouvement." },
+  "oiseau-machine":{ d:"x-reardelt", m:["Arrière d'épaule","Trapèzes moyens"], s:["Face au dossier du pec deck, poignées à hauteur d'épaules.","Bras presque tendus.","Ouvre vers l'arrière jusqu'à l'alignement des bras avec le buste.","Reviens lentement sans laisser les charges se toucher."], e:["Plier les coudes en cours de route.","Aller trop loin en arrière."], t:"Garde la poitrine collée au dossier pendant toute la série." },
+  "oiseau-poulie":{ d:"x-reardelt", m:["Arrière d'épaule","Trapèzes moyens"], s:["Poulies hautes croisées : main droite sur le câble gauche et inversement.","Bras tendus devant toi à hauteur d'épaules.","Ouvre vers l'arrière en écartant les mains.","Reviens en contrôlant."], e:["Tirer avec les trapèzes en haussant les épaules.","Plier les bras."], t:"La poulie garde la tension tout le long : idéal en fin de séance." },
+  "curl-pupitre":{ d:"marteau", m:["Biceps","Brachial"], s:["Règle le siège : aisselles calées contre le haut du pupitre.","Bras tendus sur le pupitre.","Monte en gardant les bras collés au pupitre.","Redescends jusqu'à l'extension complète."], e:["Décoller les coudes.","Couper le bas du mouvement."], t:"La descente lente fait tout le travail : compte 3 secondes." },
+  "curl-poulie":{ d:"marteau", m:["Biceps","Brachial"], s:["Barre ou poignée à la poulie basse, un pas en arrière.","Coudes collés au corps.","Monte jusqu'aux épaules sans avancer les coudes.","Redescends lentement."], e:["Se pencher en arrière.","Laisser la charge remonter les bras."], t:"La tension reste constante, même en bas : profites-en pour bien serrer en haut." },
+  "curl-haltere":{ d:"marteau", m:["Biceps","Brachial"], s:["Debout, haltères le long du corps.","Monte en tournant les paumes vers le haut.","Serre une seconde en haut.","Redescends lentement."], e:["Balancer le buste.","Avancer les coudes."], t:"Tu peux alterner les bras pour mieux te concentrer sur chacun." },
+  "marteau-corde":{ d:"marteau", m:["Brachial","Brachio-radial","Biceps"], s:["Corde à la poulie basse, pouces vers le haut.","Coudes fixes le long du corps.","Monte la corde vers les épaules.","Redescends en contrôlant."], e:["Tirer avec les épaules.","Balancer le buste."], t:"Écarte légèrement la corde en haut pour mieux contracter." },
+  "curl-inverse":{ d:"marteau", m:["Brachio-radial","Brachial","Avant-bras"], s:["Barre EZ en pronation, paumes vers le bas.","Coudes collés au corps.","Monte sans casser les poignets.","Redescends lentement."], e:["Plier les poignets.","Charger trop lourd."], t:"Charge 30 à 40 % plus léger qu'un curl classique." },
+  "marteau-incline":{ d:"curlincl", m:["Brachial","Biceps, longue portion"], s:["Banc à 45°, dos plaqué.","Bras pendants, prise neutre.","Monte sans avancer les coudes.","Redescends jusqu'à l'étirement complet."], e:["Décoller les épaules.","Raccourcir l'amplitude."], t:"L'étirement en bas est le point fort de cette variante : ne le saute pas." },
+  "bench-barre":{ d:"bench", m:["Pectoraux","Triceps","Avant d'épaule"], s:["Yeux sous la barre, omoplates serrées, pieds ancrés.","Prise un peu plus large que les épaules.","Descends la barre au bas des pecs, coudes à 45°.","Pousse fort en gardant les fesses sur le banc."], e:["Rebondir sur la poitrine.","Écarter les coudes à 90°."], t:"Demande un pareur pour les séries lourdes, ou passe à la Smith." },
+  "bench-smith":{ d:"bench", m:["Pectoraux","Triceps","Avant d'épaule"], s:["Règle le banc pour que la barre arrive au bas des pecs.","Omoplates serrées, pieds ancrés.","Déverrouille, descends en 2 à 3 secondes.","Pousse, puis reverrouille à la fin de la série."], e:["Banc mal placé : la barre arrive sur le cou ou le ventre.","Couper l'amplitude."], t:"Guidée et sûre : parfaite pour pousser lourd sans pareur." },
+  "chest-press":{ d:"bench", m:["Pectoraux","Triceps","Avant d'épaule"], s:["Règle le siège : poignées au milieu des pecs.","Dos plaqué, omoplates serrées.","Pousse sans verrouiller les coudes.","Reviens jusqu'à sentir l'étirement."], e:["Siège trop haut ou trop bas.","Décoller le dos."], t:"Idéal pour finir une série jusqu'à l'échec en sécurité." },
+  "incline-haltere":{ d:"incline", m:["Haut des pectoraux","Avant d'épaule","Triceps"], s:["Banc à 30°, haltères posées sur les cuisses, allonge-toi en les ramenant.","Omoplates serrées, coudes à 45°.","Descends jusqu'à l'étirement du haut des pecs.","Pousse vers le haut et légèrement vers l'intérieur."], e:["Banc trop incliné : les épaules prennent le relais.","Descendre trop peu."], t:"30° suffisent : au-delà de 45°, c'est surtout de l'épaule." },
+  "incline-smith":{ d:"incline", m:["Haut des pectoraux","Avant d'épaule","Triceps"], s:["Banc à 30° sous la Smith, barre au-dessus du haut des pecs.","Omoplates serrées.","Descends sous les clavicules en contrôlant.","Pousse sans verrouiller brutalement."], e:["Barre qui arrive sur le cou.","Rebondir en bas."], t:"Vérifie la position du banc à vide avant de charger." },
+  "incline-barre":{ d:"incline", m:["Haut des pectoraux","Avant d'épaule","Triceps"], s:["Banc à 30°, yeux sous la barre.","Omoplates serrées, prise un peu plus large que les épaules.","Descends la barre sous les clavicules.","Pousse vers le haut."], e:["Cambrer exagérément.","Coudes à 90°."], t:"Prends 15 à 20 % de moins qu'au développé couché." },
+  "dips-assist":{ d:"dips", m:["Bas des pectoraux","Triceps","Avant d'épaule"], s:["Règle l'aide, genoux sur le coussin.","Buste penché en avant.","Descends jusqu'à l'étirement des pecs.","Remonte sans verrouiller brutalement."], e:["Trop d'aide.","Descendre trop bas si l'épaule tire."], t:"Diminue l'aide dès que tu fais 12 reps propres partout." },
+  "pompes":{ d:"x-pushup", m:["Pectoraux","Triceps","Avant d'épaule","Abdos"], s:["Mains un peu plus larges que les épaules, corps gainé de la tête aux pieds.","Descends la poitrine jusqu'au sol, coudes à 45°.","Pousse fort pour remonter bras tendus.","Garde les fesses alignées."], e:["Creuser le dos.","Descendre à moitié."], t:"Trop facile ? Pieds surélevés sur un banc, ou un temps de descente de 3 secondes." },
+  "bench-serre":{ d:"bench", m:["Triceps","Bas des pectoraux"], s:["Prise largeur d'épaules.","Coudes près du corps.","Descends la barre au bas des pecs.","Pousse en verrouillant les triceps."], e:["Prise trop serrée qui casse les poignets.","Écarter les coudes."], t:"Le meilleur exercice de base pour charger les triceps." },
+  "pec-deck":{ d:"ecarte", m:["Pectoraux","Avant d'épaule"], s:["Règle le siège : poignées à hauteur de poitrine.","Bras légèrement fléchis.","Ramène les mains l'une vers l'autre et serre une seconde.","Reviens lentement jusqu'à l'étirement."], e:["Laisser les charges taper.","Ouvrir trop loin derrière les épaules."], t:"Pense « serrer un tronc d'arbre » au centre." },
+  "ecarte-haltere":{ d:"ecarte", m:["Pectoraux","Avant d'épaule"], s:["Allongé sur le banc plat, haltères au-dessus de la poitrine.","Coudes légèrement fléchis et fixes.","Ouvre en arc jusqu'à l'étirement des pecs.","Remonte en arc, sans cogner les haltères."], e:["Plier puis tendre les coudes.","Descendre trop bas avec une charge lourde."], t:"Charge légère et amplitude maximale : c'est l'étirement qui travaille." },
+  "elevlat":{ d:"lat", m:["Deltoïde moyen"], s:["Debout, haltères le long du corps, buste légèrement penché.","Coudes légèrement fléchis.","Monte sur les côtés jusqu'à l'horizontale.","Redescends en 2 secondes."], e:["Hausser les épaules.","Monter au-dessus de l'horizontale.","Balancer le buste."], t:"Pousse les haltères loin sur les côtés plutôt que vers le haut." },
+  "lat-machine":{ d:"lat", m:["Deltoïde moyen"], s:["Règle le siège : épaules alignées avec l'axe de la machine.","Coudes contre les appuis.","Monte jusqu'à l'horizontale.","Redescends lentement."], e:["Hausser les épaules.","Aller trop vite."], t:"Très stable : idéale pour pousser la série jusqu'à l'échec." },
+  "rowing-menton":{ d:"x-upright", m:["Deltoïde moyen","Trapèzes"], s:["Barre à la poulie basse, prise large.","Monte la barre le long du corps.","Coudes plus hauts que les mains, jusqu'à hauteur d'épaules.","Redescends en contrôlant."], e:["Prise serrée qui pince l'épaule.","Monter au-dessus des épaules."], t:"Arrête-toi à hauteur d'épaules : plus haut, l'articulation souffre." },
+  "triceps-barre":{ d:"triceps", m:["Triceps"], s:["Barre droite à la poulie haute.","Coudes collés au corps.","Pousse jusqu'à l'extension complète.","Remonte jusqu'à l'horizontale des avant-bras."], e:["Avancer les coudes.","S'aider du buste."], t:"Tu peux charger un peu plus qu'à la corde." },
+  "extension-nuque":{ d:"x-overhead", m:["Triceps, longue portion"], s:["Assis ou debout, haltère tenu à deux mains au-dessus de la tête.","Coudes vers le plafond, serrés.","Descends l'haltère derrière la tête jusqu'à l'étirement.","Remonte en tendant les bras."], e:["Écarter les coudes.","Cambrer le dos."], t:"C'est l'étirement de la longue portion du triceps qui rend cet exercice si efficace." },
+  "dips-banc":{ d:"x-dipsbench", m:["Triceps","Avant d'épaule"], s:["Mains sur le bord du banc derrière toi, jambes devant.","Descends en pliant les coudes à 90°.","Remonte en poussant sur les mains.","Garde le dos proche du banc."], e:["Descendre trop bas.","Écarter les coudes."], t:"Pieds sur un autre banc pour corser l'exercice." },
+  "shoulder-press":{ d:"x-press", m:["Avant d'épaule","Deltoïde moyen","Triceps"], s:["Règle le siège : poignées à hauteur d'oreilles.","Dos plaqué au dossier.","Pousse au-dessus de la tête sans verrouiller.","Redescends jusqu'aux oreilles."], e:["Cambrer.","Couper l'amplitude."], t:"Stable et sûre : parfaite pour charger lourd." },
+  "militaire-smith":{ d:"x-press", m:["Avant d'épaule","Deltoïde moyen","Triceps"], s:["Assis sur un banc droit sous la Smith.","Barre devant le visage, prise un peu plus large que les épaules.","Pousse au-dessus de la tête.","Redescends au niveau du menton."], e:["Cambrer le bas du dos.","Descendre derrière la nuque."], t:"Gaine les abdos pour protéger le dos." },
+  "lat-poulie":{ d:"lat", m:["Deltoïde moyen"], s:["Poulie basse, un bras à la fois, câble devant toi.","Penche-toi légèrement à l'opposé.","Monte jusqu'à l'horizontale.","Redescends lentement."], e:["Hausser l'épaule.","Balancer."], t:"Tension constante, idéale en dernier exercice d'épaule." },
+  "facepull-alt":{ d:"facepull", m:["Arrière d'épaule","Trapèzes moyens","Coiffe des rotateurs"], s:["Corde à hauteur du front.","Tire vers le front en écartant la corde.","Coudes hauts.","Reviens en contrôlant."], e:["Charger trop lourd.","Laisser tomber les coudes."], t:"Qualité avant charge : contraction franche à chaque rep." },
+  "shrugs-smith":{ d:"x-shrug", m:["Trapèzes"], s:["Barre de la Smith bras tendus, devant les cuisses.","Monte les épaules vers les oreilles.","Pause d'une seconde en haut.","Redescends lentement."], e:["Rouler les épaules.","Plier les bras."], t:"Mouvement vertical uniquement : haut, pause, bas." },
+  "releves-chaise":{ d:"x-crunch", m:["Bas des abdos","Fléchisseurs de hanche"], s:["Avant-bras sur les appuis, dos plaqué.","Jambes pendantes.","Monte les genoux vers la poitrine en enroulant le bassin.","Redescends sans balancer."], e:["Prendre de l'élan.","Cambrer le dos."], t:"Enroule le bassin en haut : c'est là que les abdos travaillent vraiment." },
+  "crunch-machine":{ d:"x-crunch", m:["Grand droit de l'abdomen"], s:["Règle la machine, pieds calés.","Enroule le buste vers le bassin.","Expire en bas du mouvement.","Reviens lentement."], e:["Tirer avec les bras.","Aller trop vite."], t:"Pense « rapprocher les côtes du bassin »." },
+  "crunch-sol":{ d:"x-crunch", m:["Grand droit de l'abdomen"], s:["Allongé, genoux pliés, pieds au sol.","Mains sur la poitrine ou aux tempes.","Enroule le haut du buste, bas du dos au sol.","Redescends lentement."], e:["Tirer sur la nuque.","Décoller le bas du dos."], t:"Petite amplitude, grosse contraction." },
+  "hack-squat":{ d:"x-squat", m:["Quadriceps","Fessiers"], s:["Dos plaqué, pieds largeur d'épaules au milieu de la plateforme.","Descends au moins jusqu'à 90°.","Pousse avec les talons.","Ne verrouille pas les genoux en haut."], e:["Décoller les talons.","Couper l'amplitude."], t:"Pieds plus bas = plus de quadriceps ; plus haut = plus de fessiers." },
+  "squat-smith":{ d:"x-squat", m:["Quadriceps","Fessiers"], s:["Barre sur les trapèzes, pieds légèrement devant la barre.","Descends jusqu'à la parallèle.","Remonte en poussant dans le sol.","Garde le dos droit."], e:["Genoux qui rentrent.","Arrondir le dos en bas."], t:"Trouve ta position de pieds à vide avant de charger." },
+  "goblet-squat":{ d:"x-squat", m:["Quadriceps","Fessiers","Gainage"], s:["Haltère tenu contre la poitrine.","Pieds un peu plus larges que les épaules.","Descends entre les genoux, buste droit.","Remonte en poussant dans le sol."], e:["Pencher le buste.","Talons qui décollent."], t:"Parfait pour apprendre un squat propre." },
+  "fentes":{ d:"x-squat", m:["Quadriceps","Fessiers"], s:["Haltères le long du corps.","Grand pas en avant.","Descends le genou arrière vers le sol.","Repousse sur la jambe avant."], e:["Genou avant qui dépasse beaucoup le pied.","Buste qui penche."], t:"Fais toutes les reps d'une jambe, puis l'autre." },
+  "rdl-barre":{ d:"x-hinge", m:["Ischios","Fessiers","Lombaires"], s:["Barre devant les cuisses, genoux légèrement fléchis.","Pousse les hanches en arrière, dos plat.","Descends la barre le long des jambes jusqu'à l'étirement des ischios.","Remonte en contractant les fessiers."], e:["Arrondir le dos.","Plier les genoux comme un squat."], t:"Arrête-toi quand le dos commence à s'arrondir, pas avant." },
+  "legcurl-assis":{ d:"x-legcurl", m:["Ischios"], s:["Règle la machine : genoux alignés avec l'axe.","Boudin au-dessus des chevilles.","Ramène les talons vers les fesses.","Remonte lentement."], e:["Décoller les fesses.","Aller trop vite."], t:"Le leg curl assis étire mieux les ischios que la version allongée." },
+  "sissy-smith":{ d:"x-squat", m:["Quadriceps","Fessiers"], s:["Pied arrière posé sur un banc.","Haltères le long du corps.","Descends à la verticale.","Remonte en poussant sur la jambe avant."], e:["Pied avant trop près du banc.","Buste qui s'effondre."], t:"Exercice exigeant : commence léger." },
+  "mollets-debout":{ d:"x-calf", m:["Mollets"], s:["Avant des pieds sur la marche, talons dans le vide.","Descends les talons au maximum.","Monte sur la pointe des pieds.","Pause d'une seconde en haut."], e:["Rebondir.","Plier les genoux."], t:"Les mollets aiment l'amplitude complète et les pauses." }
+};
+/* Fiche d'un exercice : la fiche détaillée si elle existe, sinon celle du remplacement, sinon une fiche construite à partir de l'idée de Claude. */
+function infoFor(id){
+  if (INFO[id]) return INFO[id];
+  const a = INFO_ALT[id], exo = ALL_EXOS[id];
+  if (a) return { muscles: a.m, steps: a.s, errors: a.e, tip: a.t, yt: exo ? exo.name.toLowerCase() : id };
+  if (exo && exo.replaces && INFO[exo.replaces]){
+    const o = INFO[exo.replaces];
+    const steps = String(exo.cue || "").split(/(?<=[.!])\s+/).filter(x => x.trim().length > 3);
+    return { muscles: o.muscles, steps: steps.length ? steps : o.steps, errors: ["Charger trop lourd au détriment de l'amplitude.", "Descendre trop vite : contrôle chaque répétition."], tip: exo.why || o.tip, yt: exo.name.toLowerCase() };
+  }
+  return null;
+}
+function demoFor(id){
+  if (DEMO[id]) return id;
+  const a = INFO_ALT[id]; if (a && DEMO[a.d]) return a.d;
+  const exo = ALL_EXOS[id]; if (exo && exo.replaces && DEMO[exo.replaces]) return exo.replaces;
+  return null;
+}
 /* Démos animées : deux poses (étirement → contraction), vue de profil ou de face. */
 const FRONT = { head:[100,24], hip:[100,80], legs:[[94,82],[92,107],[92,132]] };
 const DEMO = {
@@ -3011,6 +3082,50 @@ const DEMO = {
     { head:[58,86], sh:[70,92], el:[84,104], ha:[96,112], hip:[104,112], kn:[130,92], an:[154,90] },
     { head:[58,86], sh:[70,92], el:[84,104], ha:[96,112], hip:[104,112], kn:[130,92], an:[160,84] } ]}
 };
+Object.assign(DEMO, {
+  "x-pushup":{ scene:"floor", attach:null, p:[
+    { head:[44,116], sh:[60,120], el:[76,112], ha:[56,133], hip:[118,120], kn:[147,126], an:[176,130] },
+    { head:[40,86], sh:[55,92], el:[56,112], ha:[56,133], hip:[115,104], kn:[146,116], an:[176,128] } ]},
+  "x-row1":{ scene:"floor", attach:"db", p:[
+    { head:[60,58], sh:[72,62], el:[72,84], ha:[72,106], hip:[110,78], kn:[112,105], an:[110,132] },
+    { head:[60,58], sh:[72,62], el:[96,56], ha:[86,76], hip:[110,78], kn:[112,105], an:[110,132] } ]},
+  "x-reardelt":{ scene:"floor", attach:"db", p:[
+    { head:[60,58], sh:[72,62], el:[72,84], ha:[70,106], hip:[110,78], kn:[112,105], an:[110,132] },
+    { head:[60,58], sh:[72,62], el:[86,68], ha:[100,62], hip:[110,78], kn:[112,105], an:[110,132] } ]},
+  "x-overhead":{ scene:"floor", attach:"db", p:[
+    { head:[104,26], sh:[100,40], el:[104,14], ha:[90,30], hip:[100,80], kn:[101,106], an:[100,132] },
+    { head:[104,26], sh:[100,40], el:[103,12], ha:[102,-8], hip:[100,80], kn:[101,106], an:[100,132] } ]},
+  "x-press":{ scene:"xseat", attach:"handle", p:[
+    { head:[88,50], sh:[86,64], el:[72,72], ha:[78,54], hip:[92,104], kn:[122,104], an:[124,132] },
+    { head:[88,50], sh:[86,64], el:[82,40], ha:[86,18], hip:[92,104], kn:[122,104], an:[124,132] } ]},
+  "x-upright":{ scene:"tower", attach:"handle", pulleys:[[172,128]], p:[
+    { head:[102,28], sh:[100,40], el:[102,62], ha:[106,82], hip:[100,80], kn:[101,106], an:[100,132] },
+    { head:[102,28], sh:[100,40], el:[88,36], ha:[106,46], hip:[100,80], kn:[101,106], an:[100,132] } ]},
+  "x-pullover":{ scene:"tower2", attach:"handle", pulleys:[[128,6]], p:[
+    { head:[110,30], sh:[104,42], el:[118,28], ha:[130,16], hip:[96,80], kn:[98,106], an:[96,132] },
+    { head:[110,30], sh:[104,42], el:[112,62], ha:[108,82], hip:[96,80], kn:[98,106], an:[96,132] } ]},
+  "x-dipsbench":{ scene:"bench", attach:null, p:[
+    { head:[82,62], sh:[78,74], el:[60,80], ha:[70,94], hip:[84,116], kn:[120,104], an:[124,132] },
+    { head:[80,44], sh:[76,56], el:[72,76], ha:[70,94], hip:[84,98], kn:[120,100], an:[124,132] } ]},
+  "x-squat":{ scene:"floor", attach:null, p:[
+    { head:[110,58], sh:[104,70], el:[116,78], ha:[112,68], hip:[78,104], kn:[112,104], an:[100,132] },
+    { head:[100,26], sh:[98,38], el:[110,48], ha:[106,40], hip:[96,80], kn:[100,106], an:[98,132] } ]},
+  "x-hinge":{ scene:"floor", attach:"db", p:[
+    { head:[128,72], sh:[116,74], el:[118,96], ha:[118,116], hip:[78,82], kn:[102,106], an:[98,132] },
+    { head:[100,26], sh:[98,38], el:[98,60], ha:[98,82], hip:[96,80], kn:[100,106], an:[98,132] } ]},
+  "x-legcurl":{ scene:"xseat", attach:null, p:[
+    { head:[90,48], sh:[88,62], el:[96,82], ha:[104,98], hip:[92,100], kn:[124,100], an:[154,98] },
+    { head:[90,48], sh:[88,62], el:[96,82], ha:[104,98], hip:[92,100], kn:[124,100], an:[126,128] } ]},
+  "x-calf":{ scene:"floor", attach:null, p:[
+    { head:[102,28], sh:[100,40], el:[100,62], ha:[100,82], hip:[100,80], kn:[101,106], an:[100,132] },
+    { head:[102,20], sh:[100,32], el:[100,54], ha:[100,74], hip:[100,72], kn:[101,98], an:[100,124] } ]},
+  "x-crunch":{ scene:"floor", attach:null, p:[
+    { head:[62,124], sh:[74,126], el:[66,112], ha:[60,118], hip:[110,126], kn:[134,106], an:[158,128] },
+    { head:[74,100], sh:[84,108], el:[76,96], ha:[70,102], hip:[110,126], kn:[134,106], an:[158,128] } ]},
+  "x-shrug":{ scene:"floor", attach:"db", p:[
+    { head:[102,26], sh:[100,40], el:[100,62], ha:[100,84], hip:[100,80], kn:[101,106], an:[100,132] },
+    { head:[102,26], sh:[100,33], el:[100,55], ha:[100,77], hip:[100,80], kn:[101,106], an:[100,132] } ]}
+});
 function sceneSVG(name){
   const metal = "var(--steel-2)", pad = "var(--surface-2)", floor = `<rect x="0" y="134" width="200" height="4" rx="2" style="fill:var(--line)"/>`;
   switch (name){
@@ -3024,6 +3139,7 @@ function sceneSVG(name){
     case "bench": return floor + `<rect x="36" y="94" width="112" height="9" rx="4" style="fill:${pad}"/><rect x="48" y="103" width="5" height="31" style="fill:${metal}"/><rect x="132" y="103" width="5" height="31" style="fill:${metal}"/>`;
     case "dipbars": return floor + `<rect x="56" y="60" width="96" height="6" rx="3" style="fill:var(--steel)"/><rect x="60" y="66" width="5" height="68" style="fill:${metal}"/><rect x="143" y="66" width="5" height="68" style="fill:${metal}"/>`;
     case "crossover": return floor + `<rect x="12" y="0" width="9" height="134" style="fill:${metal}"/><rect x="179" y="0" width="9" height="134" style="fill:${metal}"/>`;
+    case "xseat": return floor + `<line x1="86" y1="108" x2="82" y2="48" style="stroke:${pad};stroke-width:10;stroke-linecap:round"/><rect x="80" y="104" width="50" height="7" rx="3" style="fill:${pad}"/><rect x="100" y="111" width="5" height="23" style="fill:${metal}"/>`;
     case "upright": return floor + `<line x1="90" y1="110" x2="90" y2="46" style="stroke:${pad};stroke-width:10;stroke-linecap:round"/><rect x="86" y="104" width="44" height="7" rx="3" style="fill:${pad}"/><rect x="104" y="111" width="5" height="23" style="fill:${metal}"/>`;
     case "seat": return floor + `<line x1="84" y1="108" x2="80" y2="50" style="stroke:${pad};stroke-width:10;stroke-linecap:round"/><rect x="80" y="104" width="50" height="7" rx="3" style="fill:${pad}"/><rect x="100" y="111" width="5" height="23" style="fill:${metal}"/>`;
     case "legpress": return floor + `<line x1="44" y1="90" x2="112" y2="122" style="stroke:${pad};stroke-width:11;stroke-linecap:round"/><rect x="70" y="124" width="5" height="10" style="fill:${metal}"/><line x1="120" y1="132" x2="186" y2="58" style="stroke:${metal};stroke-width:4"/>`;
@@ -3144,8 +3260,10 @@ function applyMode(){
   toast(`Mode ${MODES[pick].long.toLowerCase()} activé · objectif du jour ${kfmt(dayTarget(today))} kcal`);
 }
 function openSheet(id){
-  const exo = ALL_EXOS[id], inf = INFO[id]; if (!exo || !inf) return;
-  const type = PROGRAM.A.exos.includes(exo) ? "A" : "B";
+  const exo = ALL_EXOS[id], inf = infoFor(id); if (!exo || !inf) return;
+  const baseId = exo.replaces || id;
+  const type = Object.keys(PROGRAM).find(t => PROGRAM[t].exos.some(e => e.id === baseId)) || "A";
+  const demoId = demoFor(id);
   lastFocus = document.activeElement;
   const q = encodeURIComponent("nassim sahili " + inf.yt);
   $("#sheet-body").style.setProperty("--sc", PROGRAM[type].color);
@@ -3154,7 +3272,7 @@ function openSheet(id){
     <div class="sheet-head"><div><p class="label">Comment bien faire</p><h2 id="sheet-title">${esc(exo.name)}</h2></div><button type="button" class="close-btn" data-close aria-label="Fermer">×</button></div>
     <div class="chips">${inf.muscles.map(m => `<span>${esc(m)}</span>`).join("")}</div>
     ${PHOTO[id] ? `<div class="sheet-photo" role="img" aria-label="Photo : ${esc(exo.name)}" style="background-image:url('${PHOTO[id].src}')"><span>Photo : ${esc(PHOTO[id].by)} · Unsplash</span></div>` : ""}
-    <div class="demo"><svg id="demo-svg" viewBox="0 -12 200 152" role="img" aria-label="Animation du mouvement : ${esc(exo.name)}"></svg><span class="demo-phase" id="demo-phase"></span><span class="demo-tempo">Tempo conseillé : montée 1 s, retour 2 s · ${exo.sets} × ${exo.min}–${exo.max}</span></div>
+    ${demoId ? "" : "<!-- pas d'animation -->"}<div class="demo"${demoId ? "" : " hidden"}><svg id="demo-svg" viewBox="0 -12 200 152" role="img" aria-label="Animation du mouvement : ${esc(exo.name)}"></svg><span class="demo-phase" id="demo-phase"></span><span class="demo-tempo">Tempo conseillé : montée 1 s, retour 2 s · ${exo.sets} × ${exo.min}–${exo.max}</span></div>
     <p class="label">Exécution</p>
     <ol class="steps">${inf.steps.map(x => `<li><span>${esc(x)}</span></li>`).join("")}</ol>
     <p class="label">Erreurs à éviter</p>
@@ -3163,7 +3281,7 @@ function openSheet(id){
     <a class="yt" href="https://www.youtube.com/results?search_query=${q}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="4" style="fill:var(--ink)"/><path d="M10 9l5 3-5 3z" style="fill:var(--red)"/></svg>Voir les vidéos de Nassim Sahili</a>`;
   $("#sheet").hidden = false;
   document.body.style.overflow = "hidden";
-  runDemo(id);
+  if (demoId) runDemo(demoId);
   $("#sheet-body .close-btn").focus();
 }
 function closeSheet(){
@@ -3280,7 +3398,7 @@ main.addEventListener("click", async e => {
         toast(`Record battu : ${exo.name} ! +${XP.pr} XP`); confetti(60);
       } else toast(`Série validée · +${XP.set} XP`);
       const isLastSet = i === draft.sets[exoId].length - 1;
-      startRest(isLastSet ? Math.min(exo.rest, 120) : exo.rest, isLastSet ? "Exercice suivant" : `${exo.name} · série ${i + 2}`, exoId);
+      startRest(exo.rest, isLastSet ? "Exercice suivant" : `${exo.name} · série ${i + 2}`, exoId);
       refreshViz(exoId, "lift");
       setTimeout(() => revealNext(exoId), 350);
     } else {
