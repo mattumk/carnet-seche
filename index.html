@@ -481,6 +481,12 @@ body.rest-over::after{content:"";position:fixed;inset:0;pointer-events:none;z-in
 .hm-c b{position:absolute;top:3px;left:5px;font-size:10px;font-weight:600;opacity:.85}
 .hm-c i{font-style:normal;font-weight:800;font-size:15px}
 .hm-c.fut{background:transparent}
+button.hm-c{border:0;padding:0;font:inherit;color:var(--fg);background:transparent;cursor:pointer}
+button.hm-c:active{transform:scale(.94)}
+.coach-remind{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:color-mix(in srgb,var(--blue) 18%,var(--surface));border-radius:var(--r);padding:12px 14px;color:var(--fg);font:inherit;border:0;cursor:pointer}
+.coach-remind b{flex:1}
+.coach-list{display:flex;flex-direction:column;gap:10px}
+.coach.past{background:var(--surface)}
 .hm-c.st-none,.hm-legend i.st-none{box-shadow:inset 0 0 0 1.5px var(--line);color:var(--muted)}
 .hm-c.st-ok,.hm-legend i.st-ok{background:var(--green);color:var(--ink)}
 .hm-c.st-mid,.hm-legend i.st-mid{background:var(--amber);color:var(--ink)}
@@ -1273,15 +1279,28 @@ function coachSets(exoId){ let r = null; for (const c of appliedChanges()) if (c
 function coachLoad(exoId){ let r = null; for (const c of appliedChanges()) if (c.kind === "load" && c.exo === exoId && c.kg != null) r = c; return r; }
 function coachSurplus(){ let r = 250; for (const c of appliedChanges()) if (c.kind === "surplus" && c.surplus >= 100 && c.surplus <= 500) r = Math.round(c.surplus); return r; }
 function coachDeficit(){ let r = 500; for (const c of appliedChanges()) if (c.kind === "deficit" && c.deficit >= 200 && c.deficit <= 800) r = Math.round(c.deficit); return r; }
+/* Bilan du coach : en grand sur l'accueil le jour du bilan (dimanche soir) et le lendemain (lundi), repliable.
+   Ensuite, il est rangé dans Progrès, avec les bilans précédents. */
+let coachOpenMap = LS.get("carnet.coach.open", {});
+function coachAgeDays(d){ return Math.round((new Date(dayKey(new Date()) + "T12:00:00") - new Date(d.date + "T12:00:00")) / 864e5); }
+function coachPending(d){ return (d.changes || []).filter(c => c.status === "proposed" && c.kind !== "note").length; }
 function coachCard(){
   const d = coachDocs()[0]; if (!d) return "";
-  const pending = (d.changes || []).filter(c => c.status === "proposed").length;
-  const age = (Date.now() - new Date(d.date + "T12:00:00")) / 864e5;
-  if (age > 10 && !pending) return "";
-  const open = pending > 0 || coachOpen;
+  const pending = coachPending(d), age = coachAgeDays(d);
+  if (age <= 1) return coachDocCard(d, coachOpenMap[d.id] !== false);
+  if (pending) return `<button type="button" class="coach-remind" data-coach-go><span class="coach-badge">Coach</span><b>${pending} changement${pending > 1 ? "s" : ""} à valider</b><span class="muted">→</span></button>`;
+  return "";
+}
+function coachSection(){
+  const docs = coachDocs().slice(0, 8); if (!docs.length) return "";
+  return `<div class="sec-title" id="coach-sec"><h2>Tes bilans coach</h2><span class="small muted">chaque dimanche soir</span></div>
+    <div class="coach-list">${docs.map((d, i) => coachDocCard(d, coachOpenMap[d.id] === true || (coachOpenMap[d.id] === undefined && i === 0 && coachPending(d) > 0), i > 0)).join("")}</div>`;
+}
+function coachDocCard(d, open, past){
+  const pending = coachPending(d);
   const kindIcon = { load:"↑", sets:"＋", swap:"⇄", deficit:"kcal", surplus:"kcal", note:"i" };
-  return `<section class="coach">
-    <button type="button" class="coach-head" data-coach-toggle aria-expanded="${open}">
+  return `<section class="coach${past ? " past" : ""}">
+    <button type="button" class="coach-head" data-coach-toggle="${esc(d.id)}" aria-expanded="${open}">
       <span class="coach-badge">Coach</span>
       <span class="coach-t"><b>${esc(d.title || "Ton bilan de la semaine")}</b><i>${esc(new Date(d.date + "T12:00:00").toLocaleDateString("fr-FR", { weekday:"long", day:"numeric", month:"long" }))}${pending ? ` · ${pending} changement${pending > 1 ? "s" : ""} à valider` : ""}</i></span>
       <span class="coach-chev">${open ? "–" : "+"}</span>
@@ -1297,6 +1316,7 @@ function coachCard(){
           : c.status === "declined" ? `<span class="cc-act"><span class="pill">Refusé</span><button type="button" class="link-btn" data-coach="${esc(d.id)}|${esc(c.id)}|proposed">Revoir</button></span>`
           : `<span class="cc-act"><button type="button" class="btn sm" data-coach="${esc(d.id)}|${esc(c.id)}|applied">Appliquer</button><button type="button" class="ghost sm" data-coach="${esc(d.id)}|${esc(c.id)}|declined">Non merci</button></span>`}
       </div>`).join("")}</div>` : ""}
+      ${(d.appIdeas || []).length ? `<p class="label">Idées pour l'appli</p><ul class="rules-list">${d.appIdeas.map(x => `<li>${esc(x)}</li>`).join("")}</ul><p class="small muted">Une idée te plaît ? Dis-le à Claude dans le chat, il l'ajoutera.</p>` : ""}
     </div>` : ""}
   </section>`;
 }
@@ -1306,7 +1326,7 @@ async function setCoachStatus(docId, changeId, status){
   const nd = { ...d, changes: (d.changes || []).map(c => c.id === changeId ? { ...c, status, decidedAt: new Date().toISOString() } : c) };
   cloudCoach = cloudCoach.map(x => x.id === docId ? nd : x); LS.set("carnet.cache.coach", cloudCoach);
   DEFICIT = coachDeficit(); SURPLUS = coachSurplus();
-  coachOpen = true; render();
+  coachOpenMap[docId] = true; LS.set("carnet.coach.open", coachOpenMap); render();
   const ch = nd.changes.find(c => c.id === changeId);
   toast(status === "applied" ? `Appliqué : ${ch.label}` : status === "declined" ? "Changement refusé" : "Changement remis en attente");
   const ok = await writeDoc("coach", nd);
@@ -1704,6 +1724,7 @@ function viewProgressInner(){
     </section>
 `;
   let rest = `
+    ${coachSection()}
     <section class="stats">
       <div class="stat" style="--c:var(--blue)"><div class="v">${A.nSess}</div><div class="k">séances</div></div>
       <div class="stat" style="--c:var(--yellow)"><div class="v">${A.prCount}</div><div class="k">records battus</div></div>
@@ -2004,7 +2025,7 @@ function historyBlock(){
     if (r.future) return `<span class="hm-c fut"></span>`;
     const S = STATUS[r.status];
     const tip = `${r.date.toLocaleDateString("fr-FR", { weekday:"long", day:"numeric", month:"long" })} : ${S.l}${r.intake != null ? ` · ${kfmt(r.intake)} mangées / ${kfmt(r.exp)} dépensées` : ""}`;
-    return `<span class="hm-c st-${r.status}${r.today ? " today" : ""}" title="${esc(tip)}" aria-label="${esc(tip)}"><b>${r.date.getDate()}</b>${S.g ? `<i>${S.g}</i>` : ""}</span>`;
+    return `<button type="button" class="hm-c st-${r.status}${r.today ? " today" : ""}" data-day-open="${r.key}" title="${esc(tip)}" aria-label="${esc(tip)}, voir le détail"><b>${r.date.getDate()}</b>${S.g ? `<i>${S.g}</i>` : ""}</button>`;
   };
   const weekSum = days7 => {
     const lg = days7.filter(r => !r.future && r.status !== "none" && r.status !== "open" && r.status !== "inc");
@@ -2041,7 +2062,7 @@ function historyBlock(){
       ${weeks.map(w => w.map(cell).join("")).join("")}
     </div>
     <div class="hm-legend"><span><i class="st-ok"></i>Objectif tenu</span><span><i class="st-mid"></i>${STATUS.mid.l}</span><span><i class="st-over"></i>${STATUS.over.l}</span><span><i class="st-inc"></i>Dîner non noté</span><span><i class="st-none"></i>Non noté</span></div>
-    <p class="small muted">${{ seche: "« Objectif tenu » : au moins ~450 kcal sous ta dépense. « Léger déficit » : sous ta dépense, mais moins que prévu.", masse: "« Objectif tenu » : entre 200 kcal sous et 250 kcal au-dessus de ton objectif. En dessous, pas assez pour construire ; au-dessus, ça part en gras.", entretien: "« Objectif tenu » : à ±200 kcal de ta dépense." }[curMode()]}</p>
+    <p class="small muted">Touche un jour pour revoir ses repas et son sport. ${{ seche: "« Objectif tenu » : au moins ~450 kcal sous ta dépense. « Léger déficit » : sous ta dépense, mais moins que prévu.", masse: "« Objectif tenu » : entre 200 kcal sous et 250 kcal au-dessus de ton objectif. En dessous, pas assez pour construire ; au-dessus, ça part en gras.", entretien: "« Objectif tenu » : à ±200 kcal de ta dépense." }[curMode()]}</p>
     <p class="label" style="margin-top:6px">Synthèse par semaine</p>
     <div class="wks">${sums.map(weekRow).join("")}</div>
   </section>`;
@@ -3362,7 +3383,9 @@ main.addEventListener("click", async e => {
     return;
   }
   if (t.dataset.go){ tab = t.dataset.go; nut.day = dayKey(new Date()); nut.view = "jour"; nut.adding = null; confirmKey = null; render(); window.scrollTo(0, 0); return; }
-  if (t.dataset.coachToggle !== undefined){ coachOpen = !(t.getAttribute("aria-expanded") === "true"); render(); return; }
+  if (t.dataset.coachToggle !== undefined){ coachOpenMap[t.dataset.coachToggle] = !(t.getAttribute("aria-expanded") === "true"); LS.set("carnet.coach.open", coachOpenMap); render(); return; }
+  if (t.dataset.coachGo !== undefined){ tab = "progres"; const d0 = coachDocs()[0]; if (d0) coachOpenMap[d0.id] = true; render(); const sec = document.getElementById("coach-sec"); if (sec) sec.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" }); return; }
+  if (t.dataset.dayOpen){ tab = "nutrition"; nut.view = "jour"; nut.day = t.dataset.dayOpen; nut.adding = null; render(); window.scrollTo(0, 0); return; }
   if (t.dataset.coach){ const [d, c, st] = t.dataset.coach.split("|"); setCoachStatus(d, c, st); return; }
   if (t.dataset.swap){ swap.open = swap.open === t.dataset.swap ? null : t.dataset.swap; swap.err = ""; render(); return; }
   if (t.dataset.swapClose !== undefined){ swap.open = null; render(); return; }
